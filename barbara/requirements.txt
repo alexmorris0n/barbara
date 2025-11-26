@@ -1,5 +1,5 @@
-# SignalWire AI Agents SDK v1.0.4 (required for add_pre_answer_verb)
-signalwire-agents>=1.0.4
+# SignalWire AI Agents SDK (latest)
+signalwire-agents
 
 # Database
 supabase>=2.0.0
