@@ -1,6 +1,6 @@
 """
 Barbara Agent - SignalWire AI Agents SDK Implementation
-Refactored from SWAIG bridge to SDK v1.0.2
+Refactored from SWAIG bridge to SDK v1.0.4
 
 Per Manual:
 - Section 3.11: AgentBase constructor pattern
@@ -187,10 +187,6 @@ Rules:
         - called_id_num: Number that was called
         - direction: "inbound" or "outbound"
         """
-        # Play US ringback tone while AI loads (eliminates awkward silence)
-        # Per Brian: add play verb FIRST so ringback plays until AI answers
-        self.add_verb("play", {"urls": ["ring:us"]})
-        
         # Extract phone number from SignalWire request
         # NOTE: SDK manual says caller_id_num, but SignalWire actually sends nested in 'call' object
         call_data = request_data.get("call", {})
@@ -205,6 +201,16 @@ Rules:
         phone = normalize_phone(caller_num) if caller_num else "unknown"
         
         logger.info(f"[BARBARA] Call from: {caller_num} (normalized: {phone}, direction: {direction})")
+        
+        # PRE-ANSWER: Ringback tone for INBOUND only
+        # Per SDK 1.0.4: Use add_pre_answer_verb with auto_answer=False
+        # For OUTBOUND: No ringback - person already answered their phone
+        if direction == "inbound":
+            self.add_pre_answer_verb("play", {
+                "urls": ["ring:us"],
+                "auto_answer": False  # CRITICAL: prevents play from answering prematurely
+            })
+            logger.info("[BARBARA] Added US ringback for inbound call")
         
         # Load data from database (sync calls per manual Section 3.18.8)
         lead = get_lead_by_phone(phone)
