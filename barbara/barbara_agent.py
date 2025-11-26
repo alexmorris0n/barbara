@@ -23,6 +23,7 @@ from signalwire_agents.core.function_result import SwaigFunctionResult
 # Import services
 from services.database import (
     get_lead_by_phone,
+    get_lead_by_id,
     get_conversation_state,
     update_conversation_state,
     get_theme_prompt,
@@ -171,7 +172,7 @@ Rules:
         
         logger.info("[BARBARA] Agent initialized with %d contexts", len(ALL_NODES))
     
-    def on_swml_request(self, request_data: dict, *args, **kwargs) -> None:
+    def on_swml_request(self, request_data: dict, callback_path: str = None, request = None, *args, **kwargs) -> None:
         # NOTE: SDK passes 4 args but manual documents 2. Using *args, **kwargs as workaround.
         """
         Per Section 3.18.3 (The on_swml_request Method):
@@ -187,20 +188,48 @@ Rules:
         - called_id_num: Number that was called
         - direction: "inbound" or "outbound"
         """
-        # Extract phone number from SignalWire request
-        # NOTE: SDK manual says caller_id_num, but SignalWire actually sends nested in 'call' object
+        # Extract call data from SignalWire request
         call_data = request_data.get("call", {})
-        caller_num = (
-            call_data.get("from") or 
-            call_data.get("from_number") or
-            request_data.get("caller_id_num") or  # Fallback per SDK manual
-            ""
-        )
         direction = call_data.get("direction") or request_data.get("direction", "inbound")
+        
+        # Get query params from URL (for outbound calls with lead_id)
+        query_params = {}
+        if request:
+            try:
+                query_params = dict(request.query_params) if hasattr(request, 'query_params') else {}
+            except:
+                pass
+        
+        lead_id_from_url = query_params.get("lead_id")
+        direction_from_url = query_params.get("direction", direction)
+        
+        # Use direction from URL if provided (more reliable for outbound)
+        if direction_from_url:
+            direction = direction_from_url
+        
+        # For OUTBOUND calls: use the TO number (lead's phone) and lead_id from URL
+        # For INBOUND calls: use the FROM number (caller's phone)
+        if direction == "outbound":
+            # Outbound: we're calling the lead, so use "to" number
+            caller_num = (
+                call_data.get("to") or 
+                call_data.get("to_number") or
+                request_data.get("called_id_num") or
+                ""
+            )
+            logger.info(f"[BARBARA] Outbound call to: {caller_num}, lead_id from URL: {lead_id_from_url}")
+        else:
+            # Inbound: caller is calling us, use "from" number
+            caller_num = (
+                call_data.get("from") or 
+                call_data.get("from_number") or
+                request_data.get("caller_id_num") or
+                ""
+            )
         
         phone = normalize_phone(caller_num) if caller_num else "unknown"
         
-        logger.info(f"[BARBARA] Call from: {caller_num} (normalized: {phone}, direction: {direction})")
+        logger.info(f"[BARBARA] Call direction: {direction}, phone: {caller_num} (normalized: {phone})")
         
         # PRE-ANSWER: Ringback tone for INBOUND only
         # Per SDK 1.0.4: Use add_pre_answer_verb with auto_answer=False
@@ -212,8 +241,20 @@ Rules:
             })
             logger.info("[BARBARA] Added US ringback for inbound call")
         
-        # Load data from database (sync calls per manual Section 3.18.8)
-        lead = get_lead_by_phone(phone)
+        # Load lead data from database
+        # For OUTBOUND: try lead_id from URL first, then fall back to phone lookup
+        # For INBOUND: use phone lookup
+        lead = None
+        if lead_id_from_url:
+            lead = get_lead_by_id(lead_id_from_url)
+            if lead:
+                logger.info(f"[BARBARA] Found lead by ID: {lead.get('first_name')} (from URL param)")
+        
+        if not lead:
+            lead = get_lead_by_phone(phone)
+            if lead:
+                logger.info(f"[BARBARA] Found lead by phone: {lead.get('first_name')}")
+        
         state = get_conversation_state(phone)
         theme_prompt = get_theme_prompt("reverse_mortgage")
         models = get_active_signalwire_models()
