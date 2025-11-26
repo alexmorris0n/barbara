@@ -566,26 +566,56 @@ async function executeTool(name, args) {
         
         app.log.info({ swml_url: agentUrl.toString() }, '📍 SWML URL for outbound call');
         
-        // Use the Relay REST API for SWML-based calls
-        // This differs from LaML API - it uses swml_url instead of Url
-        const response = await fetch(`${SIGNALWIRE_SPACE_URL}/api/calling/calls`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Basic ${auth}`
-          },
-          body: JSON.stringify({
-            to: args.to_phone,
-            from: args.from_phone || SIGNALWIRE_PHONE_NUMBER,
-            swml_url: agentUrl.toString()
-          })
-        });
+        // Try Relay REST API first, fall back to LaML API
+        // Relay REST: /api/relay/rest/calls
+        // LaML: /api/laml/2010-04-01/Accounts/{project_id}/Calls.json
+        let response;
+        let result;
         
-        const result = await response.json();
+        // Attempt 1: Relay REST API (supports SWML natively)
+        try {
+          response = await fetch(`${SIGNALWIRE_SPACE_URL}/api/relay/rest/calls`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Basic ${auth}`
+            },
+            body: JSON.stringify({
+              to: args.to_phone,
+              from: args.from_phone || SIGNALWIRE_PHONE_NUMBER,
+              swml_url: agentUrl.toString()
+            })
+          });
+          
+          result = await response.json();
+          app.log.info({ result, status: response.status }, '📞 Relay REST API response');
+          
+          if (response.status === 404) {
+            throw new Error('Relay REST API not available');
+          }
+        } catch (relayError) {
+          // Attempt 2: LaML API (can also handle SWML URLs via content-type detection)
+          app.log.info({ relayError: relayError.message }, '⚠️ Relay API failed, trying LaML API');
+          
+          response = await fetch(`${SIGNALWIRE_SPACE_URL}/api/laml/2010-04-01/Accounts/${SIGNALWIRE_PROJECT_ID}/Calls.json`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'Authorization': `Basic ${auth}`
+            },
+            body: new URLSearchParams({
+              To: args.to_phone,
+              From: args.from_phone || SIGNALWIRE_PHONE_NUMBER,
+              Url: agentUrl.toString(),
+              Method: 'POST'
+            })
+          });
+          
+          result = await response.json();
+          app.log.info({ result, status: response.status }, '📞 LaML API response');
+        }
         
-        app.log.info({ result }, '📞 Call API response');
-        
-        // Relay API returns call_id, not sid
+        // Handle response - Relay uses call_id, LaML uses sid
         const callId = result.call_id || result.id || result.sid;
         
         if (!callId && !response.ok) {
