@@ -55,6 +55,79 @@ if (!SIGNALWIRE_FEATURES_ENABLED) {
   app.log.warn('   Required: SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN, SIGNALWIRE_SPACE_URL, SIGNALWIRE_PHONE_NUMBER');
 }
 
+// SignalWire Fabric guest token config
+const SIGNALWIRE_ALLOWED_ADDRESSES = process.env.SIGNALWIRE_ALLOWED_ADDRESSES || '';
+const SIGNALWIRE_GUEST_TOKEN_PATH = process.env.SIGNALWIRE_GUEST_TOKEN_PATH || '/api/fabric/guests/tokens';
+
+const parsedAllowedAddresses = SIGNALWIRE_ALLOWED_ADDRESSES
+  .split(',')
+  .map(addr => addr.trim())
+  .filter(Boolean);
+
+function getSignalWireAuthHeader() {
+  return `Basic ${Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64')}`;
+}
+
+function buildSignalWireUrl(path) {
+  try {
+    return new URL(path, SIGNALWIRE_SPACE_URL).toString();
+  } catch (error) {
+    return `${SIGNALWIRE_SPACE_URL}${path}`;
+  }
+}
+
+// Guest token endpoint for web deployment (SignalWire Fabric)
+app.post('/api/token', async (request, reply) => {
+  if (!SIGNALWIRE_FEATURES_ENABLED) {
+    return reply.status(500).send({ error: 'SignalWire credentials are not configured' });
+  }
+
+  if (!parsedAllowedAddresses.length) {
+    return reply.status(500).send({ error: 'SIGNALWIRE_ALLOWED_ADDRESSES is not configured' });
+  }
+
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const payload = {
+    allowed_addresses: parsedAllowedAddresses,
+    ttl: 3600,
+    expires_at: expiresAt,
+    state: {
+      type: 'barbara-web-call'
+    }
+  };
+
+  try {
+    const response = await fetch(buildSignalWireUrl(SIGNALWIRE_GUEST_TOKEN_PATH), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: getSignalWireAuthHeader()
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      app.log.error({ status: response.status, data }, 'Failed to generate guest token');
+      return reply.status(500).send({ error: data.message || 'Failed to generate guest token' });
+    }
+
+    const token = data.token || data.jwt_token || data.jwt || data.access_token;
+
+    if (!token) {
+      app.log.error({ data }, 'Guest token response missing token property');
+      return reply.status(500).send({ error: 'Guest token response missing token' });
+    }
+
+    app.log.info('✅ Guest token generated for web deployment');
+    return reply.send({ token, expires_at: expiresAt });
+  } catch (error) {
+    app.log.error({ error }, 'Error generating guest token');
+    return reply.status(500).send({ error: 'Failed to generate guest token' });
+  }
+});
+
 // Tool definitions
 const tools = [
   {
