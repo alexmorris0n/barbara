@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY barbara_agent.py .
 COPY services/ ./services/
 COPY tools/ ./tools/
+COPY api/ ./api/
 
 # Set PYTHONPATH to ensure imports work
 ENV PYTHONPATH=/app
