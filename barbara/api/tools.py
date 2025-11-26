@@ -10,12 +10,16 @@ Endpoints:
 - POST /api/tools/cancel_appointment
 - POST /api/tools/reschedule_appointment
 - POST /api/tools/update_lead_info
+- POST /api/outbound - Trigger outbound call with pre-warmed session
 """
 
 import os
 import logging
+import uuid
+import time
+import base64
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 import pytz
 
 from starlette.applications import Starlette
@@ -28,9 +32,62 @@ from starlette.middleware.cors import CORSMiddleware
 # Import services
 from services.database import (
     get_lead_by_phone,
-    normalize_phone
+    get_lead_by_id,
+    normalize_phone,
+    get_conversation_state,
+    update_conversation_state,
+    get_theme_prompt,
+    get_active_signalwire_models,
 )
 from services.availability import fetch_broker_availability, format_slots_for_llm, filter_slots_by_time_of_day
+
+# =============================================================================
+# Session Cache for Pre-Warmed Outbound Calls
+# =============================================================================
+# Stores pre-loaded data to avoid DB queries when SignalWire requests SWML
+# TTL: 5 minutes (call should connect within that time)
+
+SESSION_CACHE: Dict[str, Dict[str, Any]] = {}
+SESSION_TTL_SECONDS = 300  # 5 minutes
+
+
+def cache_session(session_id: str, data: Dict[str, Any]) -> None:
+    """Store pre-loaded session data"""
+    SESSION_CACHE[session_id] = {
+        "data": data,
+        "created_at": time.time()
+    }
+    logger.info(f"[CACHE] Stored session {session_id}")
+    # Cleanup old sessions
+    _cleanup_expired_sessions()
+
+
+def get_cached_session(session_id: str) -> Optional[Dict[str, Any]]:
+    """Retrieve cached session data if not expired"""
+    if session_id not in SESSION_CACHE:
+        return None
+    
+    entry = SESSION_CACHE[session_id]
+    age = time.time() - entry["created_at"]
+    
+    if age > SESSION_TTL_SECONDS:
+        del SESSION_CACHE[session_id]
+        logger.info(f"[CACHE] Session {session_id} expired (age: {age:.1f}s)")
+        return None
+    
+    logger.info(f"[CACHE] ✅ Retrieved session {session_id} (age: {age:.1f}s)")
+    return entry["data"]
+
+
+def _cleanup_expired_sessions() -> None:
+    """Remove expired sessions from cache"""
+    now = time.time()
+    expired = [sid for sid, entry in SESSION_CACHE.items() 
+               if now - entry["created_at"] > SESSION_TTL_SECONDS]
+    for sid in expired:
+        del SESSION_CACHE[sid]
+    if expired:
+        logger.info(f"[CACHE] Cleaned up {len(expired)} expired sessions")
 
 logger = logging.getLogger(__name__)
 
@@ -577,9 +634,246 @@ async def health_check(request: Request) -> JSONResponse:
     })
 
 
+async def trigger_outbound_call(request: Request) -> JSONResponse:
+    """
+    Trigger an outbound call with pre-warmed session data.
+    
+    This endpoint:
+    1. Pre-loads ALL data needed for the call (lead, broker, models, etc.)
+    2. Caches it with a session_id
+    3. Triggers SignalWire to place the call
+    4. When SignalWire requests SWML, data is already loaded = instant response
+    
+    Request body:
+    {
+        "lead_id": "uuid",           # Required - Lead to call
+        "to_phone": "+16505551234",  # Optional - Override lead's phone
+        "from_phone": "+14155551234" # Optional - Override broker's SW number
+    }
+    """
+    if not verify_api_key(request):
+        return JSONResponse({"success": False, "error": "Unauthorized"}, status_code=401)
+    
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"success": False, "error": "Invalid JSON"}, status_code=400)
+    
+    lead_id = body.get("lead_id")
+    to_phone_override = body.get("to_phone")
+    from_phone_override = body.get("from_phone")
+    
+    if not lead_id:
+        return JSONResponse({"success": False, "error": "lead_id is required"}, status_code=400)
+    
+    logger.info(f"[OUTBOUND] 🚀 Starting outbound call for lead_id={lead_id}")
+    
+    # =========================================================================
+    # PHASE 1: Pre-load ALL data
+    # =========================================================================
+    
+    # 1. Get lead data
+    lead = get_lead_by_id(lead_id)
+    if not lead:
+        return JSONResponse({"success": False, "error": f"Lead not found: {lead_id}"}, status_code=404)
+    
+    logger.info(f"[OUTBOUND] ✅ Loaded lead: {lead.get('first_name')} {lead.get('last_name')}")
+    
+    # 2. Get broker data (embedded in lead query)
+    broker = lead.get("brokers") or {}
+    broker_id = lead.get("assigned_broker_id")
+    
+    if not broker:
+        logger.warning(f"[OUTBOUND] ⚠️ No broker assigned to lead {lead_id}")
+    else:
+        logger.info(f"[OUTBOUND] ✅ Loaded broker: {broker.get('contact_name')}")
+    
+    # 3. Get/create conversation state
+    to_phone = to_phone_override or lead.get("primary_phone_e164") or lead.get("primary_phone")
+    if not to_phone:
+        return JSONResponse({"success": False, "error": "Lead has no phone number"}, status_code=400)
+    
+    normalized_phone = normalize_phone(to_phone)
+    conv_state = get_conversation_state(normalized_phone)
+    logger.info(f"[OUTBOUND] ✅ Loaded conversation state for {normalized_phone}")
+    
+    # 4. Load theme prompt
+    theme_prompt = get_theme_prompt("reverse_mortgage")
+    logger.info(f"[OUTBOUND] ✅ Loaded theme prompt")
+    
+    # 5. Load SignalWire models
+    models = get_active_signalwire_models()
+    logger.info(f"[OUTBOUND] ✅ Loaded models: LLM={models.get('llm')}, STT={models.get('stt')}, TTS={models.get('tts')}")
+    
+    # 6. Pre-fetch broker availability (for booking tool)
+    availability_slots = []
+    if broker:
+        try:
+            availability_slots = fetch_broker_availability(broker, days_ahead=14, max_slots=10)
+            logger.info(f"[OUTBOUND] ✅ Loaded {len(availability_slots)} availability slots")
+        except Exception as e:
+            logger.warning(f"[OUTBOUND] ⚠️ Could not load availability: {e}")
+    
+    # =========================================================================
+    # PHASE 2: Cache session data
+    # =========================================================================
+    
+    session_id = str(uuid.uuid4())
+    
+    cache_session(session_id, {
+        "lead": lead,
+        "broker": broker,
+        "broker_id": broker_id,
+        "conversation_state": conv_state,
+        "theme_prompt": theme_prompt,
+        "models": models,
+        "availability_slots": availability_slots,
+        "to_phone": to_phone,
+        "normalized_phone": normalized_phone,
+        "direction": "outbound",
+    })
+    
+    logger.info(f"[OUTBOUND] ✅ Cached session {session_id}")
+    
+    # =========================================================================
+    # PHASE 3: Determine FROM number (broker's SignalWire number)
+    # =========================================================================
+    
+    from_phone = from_phone_override
+    
+    if not from_phone and broker_id:
+        # Look up broker's assigned SignalWire number
+        try:
+            if supabase:
+                pn_result = supabase.table("phone_numbers")\
+                    .select("phone_number")\
+                    .eq("assigned_broker_id", broker_id)\
+                    .eq("is_active", True)\
+                    .limit(1)\
+                    .execute()
+                
+                if pn_result.data and len(pn_result.data) > 0:
+                    from_phone = pn_result.data[0].get("phone_number")
+                    logger.info(f"[OUTBOUND] ✅ Using broker's SW number: {from_phone}")
+        except Exception as e:
+            logger.warning(f"[OUTBOUND] ⚠️ Could not lookup broker phone: {e}")
+    
+    # Default fallback
+    if not from_phone:
+        from_phone = os.getenv("DEFAULT_FROM_PHONE", "+14153225030")
+        logger.info(f"[OUTBOUND] ⚠️ Using default FROM number: {from_phone}")
+    
+    # =========================================================================
+    # PHASE 4: Trigger SignalWire call
+    # =========================================================================
+    
+    sw_space_url = os.getenv("SIGNALWIRE_SPACE_URL")
+    sw_project_id = os.getenv("SIGNALWIRE_PROJECT_ID")
+    sw_api_token = os.getenv("SIGNALWIRE_API_TOKEN")
+    
+    if not all([sw_space_url, sw_project_id, sw_api_token]):
+        return JSONResponse({
+            "success": False, 
+            "error": "SignalWire credentials not configured on agent"
+        }, status_code=500)
+    
+    # Build agent URL with session_id
+    agent_base_url = os.getenv("SWML_PROXY_URL_BASE", "https://barbara-agent.fly.dev")
+    basic_auth_user = os.getenv("BASIC_AUTH_USERNAME", "signalwire")
+    basic_auth_pass = os.getenv("BASIC_AUTH_PASSWORD", "")
+    
+    # Build authenticated URL
+    if basic_auth_pass:
+        agent_url = f"https://{basic_auth_user}:{basic_auth_pass}@{agent_base_url.replace('https://', '')}/agent/barbara?session_id={session_id}&direction=outbound"
+    else:
+        agent_url = f"{agent_base_url}/agent/barbara?session_id={session_id}&direction=outbound"
+    
+    logger.info(f"[OUTBOUND] 📞 Triggering SignalWire call: {from_phone} → {to_phone}")
+    
+    # Normalize phone numbers to E.164
+    def normalize_e164(phone: str) -> str:
+        digits = ''.join(c for c in phone if c.isdigit())
+        if len(digits) == 10:
+            return f"+1{digits}"
+        elif len(digits) == 11 and digits.startswith("1"):
+            return f"+{digits}"
+        elif not phone.startswith("+"):
+            return f"+{digits}"
+        return phone
+    
+    to_phone_e164 = normalize_e164(to_phone)
+    from_phone_e164 = normalize_e164(from_phone)
+    
+    # Use SignalWire SWML Calling API
+    api_url = f"{sw_space_url}/api/calling/calls"
+    auth_string = base64.b64encode(f"{sw_project_id}:{sw_api_token}".encode()).decode()
+    
+    call_payload = {
+        "command": "dial",
+        "params": {
+            "url": agent_url,
+            "from": from_phone_e164,
+            "to": to_phone_e164,
+            "caller_id": from_phone_e164,
+            "timeout": 60
+        }
+    }
+    
+    try:
+        if httpx:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(
+                    api_url,
+                    headers={
+                        "Authorization": f"Basic {auth_string}",
+                        "Content-Type": "application/json"
+                    },
+                    json=call_payload
+                )
+            
+            if response.status_code in [200, 201, 202]:
+                result = response.json()
+                call_id = result.get("id") or result.get("sid") or result.get("call_id")
+                
+                logger.info(f"[OUTBOUND] ✅ Call initiated! call_id={call_id}")
+                
+                return JSONResponse({
+                    "success": True,
+                    "call_id": call_id,
+                    "session_id": session_id,
+                    "from_phone": from_phone_e164,
+                    "to_phone": to_phone_e164,
+                    "lead_id": lead_id,
+                    "lead_name": f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip(),
+                    "broker_name": broker.get("contact_name") if broker else None,
+                    "message": f"Call initiated to {lead.get('first_name', 'lead')}"
+                })
+            else:
+                error_text = response.text[:500]
+                logger.error(f"[OUTBOUND] ❌ SignalWire API error: {response.status_code} - {error_text}")
+                return JSONResponse({
+                    "success": False,
+                    "error": f"SignalWire API error: {response.status_code}",
+                    "details": error_text
+                }, status_code=502)
+        else:
+            return JSONResponse({
+                "success": False,
+                "error": "httpx not available"
+            }, status_code=500)
+            
+    except Exception as e:
+        logger.error(f"[OUTBOUND] ❌ Error triggering call: {e}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
 # Define routes
 routes = [
     Route("/api/health", health_check, methods=["GET"]),
+    Route("/api/outbound", trigger_outbound_call, methods=["POST"]),
     Route("/api/tools/check_broker_availability", check_broker_availability, methods=["POST"]),
     Route("/api/tools/book_appointment", book_appointment, methods=["POST"]),
     Route("/api/tools/cancel_appointment", cancel_appointment, methods=["POST"]),

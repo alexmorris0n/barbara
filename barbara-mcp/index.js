@@ -624,28 +624,31 @@ async function executeTool(name, args) {
     }
     
     case 'create_outbound_call': {
-      app.log.info({ 
-        to_phone: args.to_phone, 
-        lead_id: args.lead_id,
-        broker_id: args.broker_id,
-        from_phone_arg: args.from_phone,
-        space_url: SIGNALWIRE_SPACE_URL,
-        agent_url: BARBARA_AGENT_URL
-      }, '📞 Creating outbound call via SignalWire SWML Calling API');
+      // =======================================================================
+      // PRE-WARMED OUTBOUND CALLS
+      // =======================================================================
+      // Instead of calling SignalWire directly, we call Barbara's /api/outbound
+      // endpoint which:
+      // 1. Pre-loads ALL data (lead, broker, models, availability)
+      // 2. Caches it with a session_id  
+      // 3. Triggers SignalWire with session_id in URL
+      // 4. When SignalWire requests SWML, Barbara responds INSTANTLY (cached!)
+      //
+      // This eliminates the 2-3 second delay where users say "hello? hello?"
+      // =======================================================================
       
-      if (!SIGNALWIRE_FEATURES_ENABLED) {
-        app.log.error({
-          project_id: !!SIGNALWIRE_PROJECT_ID,
-          api_token: !!SIGNALWIRE_API_TOKEN,
-          space_url: !!SIGNALWIRE_SPACE_URL,
-          phone_number: !!SIGNALWIRE_PHONE_NUMBER
-        }, '❌ SignalWire credentials missing');
+      app.log.info({ 
+        lead_id: args.lead_id,
+        to_phone: args.to_phone,
+        from_phone: args.from_phone
+      }, '📞 Creating outbound call via Barbara /api/outbound (pre-warmed)');
+      
+      if (!BARBARA_AGENT_URL) {
         return {
           content: [
             {
               type: 'text',
-              text: `❌ Outbound call failed: SignalWire credentials not configured.\n\n` +
-                    `Required env vars: SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN, SIGNALWIRE_SPACE_URL, SIGNALWIRE_PHONE_NUMBER`
+              text: `❌ Outbound call failed: BARBARA_AGENT_URL not configured`
             }
           ],
           isError: true
@@ -653,131 +656,78 @@ async function executeTool(name, args) {
       }
       
       try {
-        const auth = Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64');
+        // Build the Barbara /api/outbound URL
+        // Strip auth from URL for API endpoint (it uses API key auth)
+        let barbaraBaseUrl = BARBARA_AGENT_URL.replace(/\/agent\/barbara.*$/, '');
+        // Remove basic auth credentials if present in URL
+        barbaraBaseUrl = barbaraBaseUrl.replace(/\/\/[^:]+:[^@]+@/, '//');
+        const outboundUrl = `${barbaraBaseUrl}/api/outbound`;
         
-        // Determine the FROM phone number:
-        // 1. If from_phone explicitly provided, use that
-        // 2. Otherwise, look up broker's SignalWire number from database
-        // 3. Fall back to default SIGNALWIRE_PHONE_NUMBER
-        let fromPhone = args.from_phone;
-        let brokerIdUsed = args.broker_id;
+        app.log.info({ outbound_url: outboundUrl }, '🔗 Barbara /api/outbound URL');
         
-        if (!fromPhone) {
-          // Look up broker's phone number from database
-          const brokerPhone = await getBrokerPhoneNumber(args.lead_id, args.broker_id);
-          if (brokerPhone) {
-            fromPhone = brokerPhone;
-            app.log.info({ broker_phone: brokerPhone }, '✅ Using broker SignalWire number');
-          } else {
-            fromPhone = SIGNALWIRE_PHONE_NUMBER;
-            app.log.info({ default_phone: fromPhone }, '⚠️ Using default SignalWire number (no broker number found)');
-          }
-        }
-        
-        // Build the agent URL with lead context
-        // This URL must serve SWML (not LaML)
-        const agentUrl = new URL(BARBARA_AGENT_URL);
-        agentUrl.searchParams.set('lead_id', args.lead_id);
-        if (args.broker_id) {
-          agentUrl.searchParams.set('broker_id', args.broker_id);
-        }
-        agentUrl.searchParams.set('direction', 'outbound');
-        
-        app.log.info({ swml_url: agentUrl.toString() }, '📍 SWML URL for outbound call');
-        
-        // Normalize phone number to E.164 format
-        let toPhone = args.to_phone;
-        if (toPhone && !toPhone.startsWith('+')) {
-          // Remove any non-digit characters
-          const digits = toPhone.replace(/\D/g, '');
-          // If 10 digits, assume US and add +1
-          if (digits.length === 10) {
-            toPhone = `+1${digits}`;
-          } else if (digits.length === 11 && digits.startsWith('1')) {
-            toPhone = `+${digits}`;
-          } else {
-            toPhone = `+${digits}`;
-          }
-        }
-        
-        app.log.info({ normalized_phone: toPhone }, '📱 Normalized phone number');
-        
-        // Use SignalWire Calling API (SWML-native) - sends JSON to SWML endpoints
-        // POST /api/calling/calls
-        const apiUrl = `${SIGNALWIRE_SPACE_URL}/api/calling/calls`;
-        
-        app.log.info({ api_url: apiUrl }, '🔗 SignalWire Calling API URL');
-        
-        // Build JSON payload for Calling API (SWML-native)
-        const callPayload = {
-          command: 'dial',
-          params: {
-            url: agentUrl.toString(),  // SWML endpoint URL
-            from: fromPhone,
-            to: toPhone,
-            caller_id: fromPhone,
-            // Optional: timeout and AMD settings
-            timeout: 60,
-            max_duration: 3600
-          }
+        // Build request payload - Barbara will handle everything else
+        const payload = {
+          lead_id: args.lead_id
         };
         
-        app.log.info({ 
-          payload: {
-            command: callPayload.command,
-            to: callPayload.params.to,
-            from: callPayload.params.from,
-            url: callPayload.params.url
-          }
-        }, '📋 Request JSON payload');
+        // Optional overrides
+        if (args.to_phone) {
+          payload.to_phone = args.to_phone;
+        }
+        if (args.from_phone) {
+          payload.from_phone = args.from_phone;
+        }
         
-        const response = await fetch(apiUrl, {
+        app.log.info({ payload }, '📋 Request payload');
+        
+        const response = await fetch(outboundUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'Authorization': `Basic ${auth}`
+            'Accept': 'application/json'
+            // Note: API key auth can be added here if needed
           },
-          body: JSON.stringify(callPayload)
+          body: JSON.stringify(payload)
         });
         
         const responseText = await response.text();
         app.log.info({ 
           status: response.status, 
-          statusText: response.statusText,
-          response_text: responseText.substring(0, 500) 
-        }, '📞 SignalWire Calling API response');
+          response_preview: responseText.substring(0, 500) 
+        }, '📞 Barbara /api/outbound response');
         
         let result;
         try {
           result = JSON.parse(responseText);
         } catch (e) {
-          app.log.error({ responseText }, '❌ Failed to parse SignalWire response as JSON');
-          throw new Error(`SignalWire returned invalid JSON (${response.status}): ${responseText.substring(0, 200)}`);
+          app.log.error({ responseText }, '❌ Failed to parse Barbara response as JSON');
+          throw new Error(`Barbara returned invalid JSON (${response.status}): ${responseText.substring(0, 200)}`);
         }
         
-        if (!response.ok) {
-          app.log.error({ result, status: response.status }, '❌ SignalWire Calling API error');
-          throw new Error(result.message || result.error_message || result.error || result.code || `Call creation failed (${response.status})`);
+        if (!response.ok || !result.success) {
+          app.log.error({ result, status: response.status }, '❌ Barbara /api/outbound error');
+          throw new Error(result.error || result.message || `Call creation failed (${response.status})`);
         }
         
-        // Calling API returns 'id' for call ID
-        const callId = result.id || result.call_id || result.sid;
-        
-        app.log.info({ call_id: callId, result }, '✅ Outbound call created via SWML Calling API');
+        app.log.info({ 
+          call_id: result.call_id,
+          session_id: result.session_id,
+          from: result.from_phone,
+          to: result.to_phone
+        }, '✅ Outbound call initiated via Barbara (pre-warmed!)');
         
         return {
           content: [
             {
               type: 'text',
-              text: `✅ Outbound Call Initiated (SWML)!\n\n` +
-                    `📞 Call ID: ${callId || 'pending'}\n` +
-                    `📱 From: ${fromPhone}\n` +
-                    `📱 To: ${toPhone}\n` +
-                    `👤 Lead ID: ${args.lead_id}\n` +
-                    `🤖 Agent: Barbara (SignalWire AI SDK)\n` +
-                    `🔗 SWML URL: ${agentUrl.toString()}\n` +
-                    `💬 Status: ${result.state || result.status || 'created'}`
+              text: `✅ Outbound Call Initiated (Pre-Warmed)!\n\n` +
+                    `📞 Call ID: ${result.call_id || 'pending'}\n` +
+                    `🔑 Session: ${result.session_id}\n` +
+                    `📱 From: ${result.from_phone}\n` +
+                    `📱 To: ${result.to_phone}\n` +
+                    `👤 Lead: ${result.lead_name || args.lead_id}\n` +
+                    `👔 Broker: ${result.broker_name || 'N/A'}\n` +
+                    `⚡ Status: Data pre-loaded - instant response when answered!`
             }
           ]
         };
@@ -786,7 +736,6 @@ async function executeTool(name, args) {
         app.log.error({ 
           error: error.message,
           stack: error.stack,
-          to_phone: args.to_phone,
           lead_id: args.lead_id
         }, '❌ Outbound call failed');
         return {
