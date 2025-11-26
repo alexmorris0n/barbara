@@ -767,14 +767,19 @@ async def trigger_outbound_call(request: Request) -> JSONResponse:
     # PHASE 4: Trigger SignalWire call
     # =========================================================================
     
-    sw_space_url = os.getenv("SIGNALWIRE_SPACE_URL")
+    # Use existing env var names (already set on Fly)
+    sw_space = os.getenv("SIGNALWIRE_SPACE")  # Just the space name, not full URL
     sw_project_id = os.getenv("SIGNALWIRE_PROJECT_ID")
-    sw_api_token = os.getenv("SIGNALWIRE_API_TOKEN")
+    sw_api_token = os.getenv("SIGNALWIRE_TOKEN")  # Note: SIGNALWIRE_TOKEN not API_TOKEN
     
-    if not all([sw_space_url, sw_project_id, sw_api_token]):
+    # Build full space URL from space name
+    sw_space_url = f"https://{sw_space}.signalwire.com" if sw_space else None
+    
+    if not all([sw_space, sw_project_id, sw_api_token]):
+        logger.error(f"[OUTBOUND] Missing SignalWire creds: space={bool(sw_space)}, project={bool(sw_project_id)}, token={bool(sw_api_token)}")
         return JSONResponse({
             "success": False, 
-            "error": "SignalWire credentials not configured on agent"
+            "error": "SignalWire credentials not configured on agent (need SIGNALWIRE_SPACE, SIGNALWIRE_PROJECT_ID, SIGNALWIRE_TOKEN)"
         }, status_code=500)
     
     # Build agent URL with session_id
