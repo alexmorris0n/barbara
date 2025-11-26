@@ -36,7 +36,8 @@ const SIGNALWIRE_SPACE_URL = process.env.SIGNALWIRE_SPACE_URL;
 const SIGNALWIRE_PHONE_NUMBER = process.env.SIGNALWIRE_PHONE_NUMBER;
 
 // Barbara Agent URL (SignalWire AI SDK)
-const BARBARA_AGENT_URL = process.env.BARBARA_AGENT_URL || 'https://barbara-swaig.fly.dev/agent/barbara';
+// Must point to the SWML endpoint: /agent/barbara
+const BARBARA_AGENT_URL = process.env.BARBARA_AGENT_URL || 'https://barbara-agent.fly.dev/agent/barbara';
 
 const SIGNALWIRE_FEATURES_ENABLED = Boolean(
   SIGNALWIRE_PROJECT_ID &&
@@ -536,7 +537,7 @@ async function executeTool(name, args) {
         to_phone: args.to_phone, 
         lead_id: args.lead_id,
         from_phone: args.from_phone || SIGNALWIRE_PHONE_NUMBER
-      }, '📞 Creating outbound call via SignalWire');
+      }, '📞 Creating outbound call via SignalWire (SWML)');
       
       if (!SIGNALWIRE_FEATURES_ENABLED) {
         return {
@@ -555,6 +556,7 @@ async function executeTool(name, args) {
         const auth = Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64');
         
         // Build the agent URL with lead context
+        // This URL must serve SWML (not LaML)
         const agentUrl = new URL(BARBARA_AGENT_URL);
         agentUrl.searchParams.set('lead_id', args.lead_id);
         if (args.broker_id) {
@@ -562,39 +564,48 @@ async function executeTool(name, args) {
         }
         agentUrl.searchParams.set('direction', 'outbound');
         
-        const response = await fetch(`${SIGNALWIRE_SPACE_URL}/api/laml/2010-04-01/Accounts/${SIGNALWIRE_PROJECT_ID}/Calls.json`, {
+        app.log.info({ swml_url: agentUrl.toString() }, '📍 SWML URL for outbound call');
+        
+        // Use the Relay REST API for SWML-based calls
+        // This differs from LaML API - it uses swml_url instead of Url
+        const response = await fetch(`${SIGNALWIRE_SPACE_URL}/api/calling/calls`, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Type': 'application/json',
             'Authorization': `Basic ${auth}`
           },
-          body: new URLSearchParams({
-            To: args.to_phone,
-            From: args.from_phone || SIGNALWIRE_PHONE_NUMBER,
-            Url: agentUrl.toString(),
-            Method: 'POST'
+          body: JSON.stringify({
+            to: args.to_phone,
+            from: args.from_phone || SIGNALWIRE_PHONE_NUMBER,
+            swml_url: agentUrl.toString()
           })
         });
         
         const result = await response.json();
         
-        if (!result.sid) {
-          throw new Error(result.message || 'Call creation failed - no SID returned');
+        app.log.info({ result }, '📞 Call API response');
+        
+        // Relay API returns call_id, not sid
+        const callId = result.call_id || result.id || result.sid;
+        
+        if (!callId && !response.ok) {
+          throw new Error(result.message || result.error || `Call creation failed (${response.status})`);
         }
         
-        app.log.info({ call_sid: result.sid }, '✅ Outbound call created');
+        app.log.info({ call_id: callId }, '✅ Outbound call created');
         
         return {
           content: [
             {
               type: 'text',
               text: `✅ Outbound Call Initiated!\n\n` +
-                    `📞 Call SID: ${result.sid}\n` +
+                    `📞 Call ID: ${callId || 'pending'}\n` +
                     `📱 From: ${args.from_phone || SIGNALWIRE_PHONE_NUMBER}\n` +
                     `📱 To: ${args.to_phone}\n` +
                     `👤 Lead ID: ${args.lead_id}\n` +
                     `🤖 Agent: Barbara (SignalWire AI SDK)\n` +
-                    `💬 Status: ${result.status || 'queued'}`
+                    `🔗 SWML URL: ${agentUrl.toString()}\n` +
+                    `💬 Status: ${result.state || result.status || 'initiated'}`
             }
           ]
         };

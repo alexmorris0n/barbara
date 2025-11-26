@@ -31,3 +31,4 @@ primary_region = "sjc"
   timeout = "5s"
   path = "/health"
 
+

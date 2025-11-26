@@ -9,3 +9,4 @@ ALTER TABLE agent_params DROP COLUMN IF EXISTS presence_penalty;
 
 
 
+
