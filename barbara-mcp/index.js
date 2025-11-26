@@ -75,6 +75,8 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
  * Returns the first active phone number for the broker, or null if not found
  */
 async function getBrokerPhoneNumber(leadId, brokerId = null) {
+  app.log.info({ lead_id: leadId, broker_id: brokerId, supabase_configured: !!(SUPABASE_URL && SUPABASE_ANON_KEY) }, '🔍 Starting broker phone lookup');
+  
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     app.log.warn('⚠️ Supabase not configured - cannot look up broker phone');
     return null;
@@ -85,19 +87,32 @@ async function getBrokerPhoneNumber(leadId, brokerId = null) {
 
     // If no broker_id provided, look it up from the lead
     if (!brokerIdToUse && leadId) {
-      const leadResponse = await fetch(
-        `${SUPABASE_URL}/rest/v1/leads?id=eq.${leadId}&select=assigned_broker_id`,
-        {
-          headers: {
-            'apikey': SUPABASE_ANON_KEY,
-            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-          }
+      const leadUrl = `${SUPABASE_URL}/rest/v1/leads?id=eq.${leadId}&select=assigned_broker_id`;
+      app.log.info({ url: leadUrl }, '🔍 Fetching lead to get broker_id');
+      
+      const leadResponse = await fetch(leadUrl, {
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
         }
-      );
-      const leads = await leadResponse.json();
+      });
+      
+      const leadResponseText = await leadResponse.text();
+      app.log.info({ status: leadResponse.status, body: leadResponseText.substring(0, 500) }, '📋 Lead query response');
+      
+      let leads;
+      try {
+        leads = JSON.parse(leadResponseText);
+      } catch (parseError) {
+        app.log.error({ error: parseError.message, body: leadResponseText }, '❌ Failed to parse lead response');
+        return null;
+      }
+      
       if (leads.length > 0 && leads[0].assigned_broker_id) {
         brokerIdToUse = leads[0].assigned_broker_id;
         app.log.info({ lead_id: leadId, broker_id: brokerIdToUse }, '📍 Found broker for lead');
+      } else {
+        app.log.warn({ lead_id: leadId, leads_count: leads.length }, '⚠️ Lead found but no assigned_broker_id');
       }
     }
 
@@ -107,26 +122,36 @@ async function getBrokerPhoneNumber(leadId, brokerId = null) {
     }
 
     // Look up the broker's phone numbers
-    const phoneResponse = await fetch(
-      `${SUPABASE_URL}/rest/v1/phone_numbers?assigned_broker_id=eq.${brokerIdToUse}&is_active=eq.true&select=phone_number,label&order=label.asc&limit=1`,
-      {
-        headers: {
-          'apikey': SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
-        }
+    const phoneUrl = `${SUPABASE_URL}/rest/v1/phone_numbers?assigned_broker_id=eq.${brokerIdToUse}&is_active=eq.true&select=phone_number,label&order=label.asc&limit=1`;
+    app.log.info({ url: phoneUrl }, '🔍 Fetching broker phone number');
+    
+    const phoneResponse = await fetch(phoneUrl, {
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
       }
-    );
-    const phones = await phoneResponse.json();
+    });
+    
+    const phoneResponseText = await phoneResponse.text();
+    app.log.info({ status: phoneResponse.status, body: phoneResponseText.substring(0, 500) }, '📋 Phone query response');
+    
+    let phones;
+    try {
+      phones = JSON.parse(phoneResponseText);
+    } catch (parseError) {
+      app.log.error({ error: parseError.message, body: phoneResponseText }, '❌ Failed to parse phone response');
+      return null;
+    }
     
     if (phones.length > 0) {
       app.log.info({ broker_id: brokerIdToUse, phone: phones[0].phone_number, label: phones[0].label }, '📞 Found broker SignalWire number');
       return phones[0].phone_number;
     }
 
-    app.log.warn({ broker_id: brokerIdToUse }, '⚠️ No phone numbers found for broker');
+    app.log.warn({ broker_id: brokerIdToUse, phones_count: phones.length }, '⚠️ No phone numbers found for broker');
     return null;
   } catch (error) {
-    app.log.error({ error: error.message }, '❌ Error looking up broker phone');
+    app.log.error({ error: error.message, stack: error.stack }, '❌ Error looking up broker phone');
     return null;
   }
 }
