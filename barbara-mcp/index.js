@@ -536,10 +536,18 @@ async function executeTool(name, args) {
       app.log.info({ 
         to_phone: args.to_phone, 
         lead_id: args.lead_id,
-        from_phone: args.from_phone || SIGNALWIRE_PHONE_NUMBER
-      }, '📞 Creating outbound call via SignalWire (SWML)');
+        from_phone: args.from_phone || SIGNALWIRE_PHONE_NUMBER,
+        space_url: SIGNALWIRE_SPACE_URL,
+        agent_url: BARBARA_AGENT_URL
+      }, '📞 Creating outbound call via SignalWire REST API');
       
       if (!SIGNALWIRE_FEATURES_ENABLED) {
+        app.log.error({
+          project_id: !!SIGNALWIRE_PROJECT_ID,
+          api_token: !!SIGNALWIRE_API_TOKEN,
+          space_url: !!SIGNALWIRE_SPACE_URL,
+          phone_number: !!SIGNALWIRE_PHONE_NUMBER
+        }, '❌ SignalWire credentials missing');
         return {
           content: [
             {
@@ -566,54 +574,104 @@ async function executeTool(name, args) {
         
         app.log.info({ swml_url: agentUrl.toString() }, '📍 SWML URL for outbound call');
         
-        // Use SignalWire's unified calling API with dial command
-        // POST /api/calling/calls with command: "dial"
-        const response = await fetch(`${SIGNALWIRE_SPACE_URL}/api/calling/calls`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Basic ${auth}`
-          },
-          body: JSON.stringify({
-            command: 'dial',
-            params: {
-              to: args.to_phone,
-              from: args.from_phone || SIGNALWIRE_PHONE_NUMBER,
-              swml_url: agentUrl.toString()
-            }
-          })
-        });
-        
-        const result = await response.json();
-        app.log.info({ result, status: response.status }, '📞 Calling API response');
-        
-        // API returns id field
-        const callId = result.id;
-        
-        if (!callId && !response.ok) {
-          throw new Error(result.message || result.error || `Call creation failed (${response.status})`);
+        // Normalize phone number to E.164 format
+        let toPhone = args.to_phone;
+        if (toPhone && !toPhone.startsWith('+')) {
+          // Remove any non-digit characters
+          const digits = toPhone.replace(/\D/g, '');
+          // If 10 digits, assume US and add +1
+          if (digits.length === 10) {
+            toPhone = `+1${digits}`;
+          } else if (digits.length === 11 && digits.startsWith('1')) {
+            toPhone = `+${digits}`;
+          } else {
+            toPhone = `+${digits}`;
+          }
         }
         
-        app.log.info({ call_id: callId }, '✅ Outbound call created');
+        app.log.info({ normalized_phone: toPhone }, '📱 Normalized phone number');
+        
+        // Use SignalWire REST API (LaML compatible) - more universally available
+        // POST /api/laml/2010-04-01/Accounts/{ProjectID}/Calls.json
+        const apiUrl = `${SIGNALWIRE_SPACE_URL}/api/laml/2010-04-01/Accounts/${SIGNALWIRE_PROJECT_ID}/Calls.json`;
+        
+        app.log.info({ api_url: apiUrl }, '🔗 SignalWire REST API URL');
+        
+        // Build form data for REST API (LaML uses form encoding, not JSON)
+        const formData = new URLSearchParams();
+        formData.append('To', toPhone);
+        formData.append('From', args.from_phone || SIGNALWIRE_PHONE_NUMBER);
+        // Use Url parameter with SWML endpoint - SignalWire will fetch SWML from this URL
+        formData.append('Url', agentUrl.toString());
+        // Tell SignalWire the URL returns SWML, not LaML/TwiML
+        formData.append('MachineDetection', 'Enable');
+        formData.append('MachineDetectionTimeout', '5');
+        
+        app.log.info({ 
+          form_data: {
+            To: toPhone,
+            From: args.from_phone || SIGNALWIRE_PHONE_NUMBER,
+            Url: agentUrl.toString()
+          }
+        }, '📋 Request form data');
+        
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Authorization': `Basic ${auth}`
+          },
+          body: formData.toString()
+        });
+        
+        const responseText = await response.text();
+        app.log.info({ 
+          status: response.status, 
+          statusText: response.statusText,
+          response_text: responseText.substring(0, 500) 
+        }, '📞 SignalWire REST API response');
+        
+        let result;
+        try {
+          result = JSON.parse(responseText);
+        } catch (e) {
+          app.log.error({ responseText }, '❌ Failed to parse SignalWire response as JSON');
+          throw new Error(`SignalWire returned invalid JSON (${response.status}): ${responseText.substring(0, 200)}`);
+        }
+        
+        if (!response.ok) {
+          app.log.error({ result, status: response.status }, '❌ SignalWire API error');
+          throw new Error(result.message || result.error_message || result.code || `Call creation failed (${response.status})`);
+        }
+        
+        // REST API returns 'sid' for call ID
+        const callId = result.sid || result.call_sid || result.id;
+        
+        app.log.info({ call_id: callId, result }, '✅ Outbound call created successfully');
         
         return {
           content: [
             {
               type: 'text',
               text: `✅ Outbound Call Initiated!\n\n` +
-                    `📞 Call ID: ${callId || 'pending'}\n` +
+                    `📞 Call SID: ${callId || 'pending'}\n` +
                     `📱 From: ${args.from_phone || SIGNALWIRE_PHONE_NUMBER}\n` +
-                    `📱 To: ${args.to_phone}\n` +
+                    `📱 To: ${toPhone}\n` +
                     `👤 Lead ID: ${args.lead_id}\n` +
                     `🤖 Agent: Barbara (SignalWire AI SDK)\n` +
                     `🔗 SWML URL: ${agentUrl.toString()}\n` +
-                    `💬 Status: ${result.state || result.status || 'initiated'}`
+                    `💬 Status: ${result.status || 'queued'}`
             }
           ]
         };
         
       } catch (error) {
-        app.log.error({ error }, '❌ Outbound call failed');
+        app.log.error({ 
+          error: error.message,
+          stack: error.stack,
+          to_phone: args.to_phone,
+          lead_id: args.lead_id
+        }, '❌ Outbound call failed');
         return {
           content: [
             {
