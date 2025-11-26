@@ -1,0 +1,525 @@
+"""
+Database service for Supabase integration
+Handles leads, conversation_state, and prompt queries
+
+Ported from Reference/reference-swaig-agent/services/database.py
+Business logic unchanged - only adapted for SDK context
+
+NOTE: All functions are SYNC per SDK manual Section 3.18.8:
+"Cache expensive lookups - Database calls in on_swml_request add latency"
+"""
+
+import os
+from supabase import create_client, Client
+from typing import Optional, Dict, Any
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Initialize Supabase client
+supabase_url = os.getenv("SUPABASE_URL")
+supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
+
+if not supabase_url or not supabase_key:
+    logger.warning("SUPABASE_URL and SUPABASE_SERVICE_KEY not set - using mock mode")
+    supabase: Optional[Client] = None
+else:
+    supabase: Client = create_client(supabase_url, supabase_key)
+
+
+def normalize_phone(phone: str) -> str:
+    """
+    Normalize phone number to 10-digit US format.
+    Handles: +16505300051, 16505300051, 6505300051, (650) 530-0051
+    """
+    if not phone:
+        return ""
+    
+    # Remove all non-digit characters
+    digits = ''.join(c for c in phone if c.isdigit())
+    
+    # If 11 digits starting with 1, strip the country code
+    if len(digits) == 11 and digits.startswith('1'):
+        digits = digits[1:]
+    
+    return digits
+
+
+def get_lead_by_phone(phone: str) -> Optional[Dict[str, Any]]:
+    """
+    Get lead by phone number
+    CRITICAL: Uses 'primary_phone' field (not 'phone')
+    """
+    if not supabase:
+        return None
+        
+    normalized = normalize_phone(phone)
+    # Also build E.164 format for matching primary_phone_e164 field
+    e164_format = f"+1{normalized}" if not normalized.startswith('+') else normalized
+    
+    try:
+        response = supabase.table('leads')\
+            .select('*, brokers!assigned_broker_id(id, contact_name, company_name, phone, nmls_number, nylas_grant_id, timezone, business_hours_start, business_hours_end, business_days, appointment_duration_minutes, buffer_between_appointments_minutes, minimum_booking_lead_time_minutes)')\
+            .or_(f'primary_phone.ilike.%{normalized}%,primary_phone_e164.eq.{e164_format}')\
+            .limit(1)\
+            .execute()
+        
+        if response.data:
+            logger.info(f"[DB] Lead found: {response.data[0].get('first_name', 'Unknown')}")
+            return response.data[0]
+        
+        logger.info(f"[DB] No lead found for phone: {normalized}")
+        return None
+        
+    except Exception as e:
+        logger.error(f"[DB] Error fetching lead: {e}")
+        return None
+
+
+def get_conversation_state(phone: str) -> Optional[Dict[str, Any]]:
+    """Get or create conversation state"""
+    if not supabase:
+        return None
+        
+    normalized = normalize_phone(phone)
+    
+    try:
+        response = supabase.table('conversation_state')\
+            .select('*')\
+            .eq('phone_number', normalized)\
+            .limit(1)\
+            .execute()
+        
+        if response.data:
+            return response.data[0]
+        
+        # Create new state if doesn't exist
+        new_state = {
+            'phone_number': normalized,
+            'current_node': 'greet',
+            'conversation_data': {},
+            'qualified': None,
+            'call_count': 0
+        }
+        
+        insert_response = supabase.table('conversation_state')\
+            .insert(new_state)\
+            .execute()
+        
+        if insert_response.data:
+            logger.info(f"[DB] Created new conversation state for: {normalized}")
+            return insert_response.data[0]
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"[DB] Error fetching conversation state: {e}")
+        return None
+
+
+def update_conversation_state(phone: str, updates: Dict[str, Any]) -> bool:
+    """Update conversation state"""
+    if not supabase:
+        return False
+        
+    normalized = normalize_phone(phone)
+    
+    try:
+        # Handle conversation_data updates (merge with existing)
+        if 'conversation_data' in updates:
+            # Get current state first (sync call now)
+            current = get_conversation_state(phone)
+            if current:
+                existing_data = current.get('conversation_data', {})
+                if isinstance(existing_data, dict) and isinstance(updates['conversation_data'], dict):
+                    updates['conversation_data'] = {**existing_data, **updates['conversation_data']}
+        
+        response = supabase.table('conversation_state')\
+            .update(updates)\
+            .eq('phone_number', normalized)\
+            .execute()
+        
+        if response.data:
+            logger.info(f"[DB] Updated conversation state for: {normalized}")
+            return True
+        
+        return False
+        
+    except Exception as e:
+        logger.error(f"[DB] Error updating conversation state: {e}")
+        return False
+
+
+def get_node_prompt(node_name: str, vertical: str = "reverse_mortgage") -> Optional[str]:
+    """
+    Get node prompt from database
+    Returns the instructions text from prompt_versions.content JSONB
+    """
+    if not supabase:
+        return None
+        
+    try:
+        # First get the prompt_id
+        prompt_response = supabase.table('prompts')\
+            .select('id')\
+            .eq('node_name', node_name)\
+            .eq('vertical', vertical)\
+            .eq('is_active', True)\
+            .limit(1)\
+            .execute()
+        
+        if not prompt_response.data:
+            logger.warning(f"[DB] No prompt found for node: {node_name}, vertical: {vertical}")
+            return None
+        
+        prompt_id = prompt_response.data[0]['id']
+        
+        # Get active version
+        version_response = supabase.table('prompt_versions')\
+            .select('content')\
+            .eq('prompt_id', prompt_id)\
+            .eq('is_active', True)\
+            .order('version_number', desc=True)\
+            .limit(1)\
+            .execute()
+        
+        if version_response.data:
+            content = version_response.data[0].get('content', {})
+            instructions = content.get('instructions', '')
+            logger.info(f"[DB] Loaded prompt for node: {node_name}")
+            return instructions
+        
+        logger.warning(f"[DB] No active version found for prompt_id: {prompt_id}")
+        return None
+        
+    except Exception as e:
+        logger.error(f"[DB] Error fetching node prompt: {e}")
+        return None
+
+
+def get_node_config(node_name: str, vertical: str = "reverse_mortgage") -> Optional[Dict[str, Any]]:
+    """
+    Get full node configuration from database
+    Returns dict with instructions, valid_contexts, functions, step_criteria
+    """
+    if not supabase:
+        # Return fallback if no DB
+        from services.fallbacks import get_fallback_node_config
+        return get_fallback_node_config(node_name)
+        
+    try:
+        # First get the prompt_id
+        prompt_response = supabase.table('prompts')\
+            .select('id')\
+            .eq('node_name', node_name)\
+            .eq('vertical', vertical)\
+            .eq('is_active', True)\
+            .limit(1)\
+            .execute()
+        
+        if not prompt_response.data:
+            logger.warning(f"[DB] No prompt found for node: {node_name}, vertical: {vertical}")
+            from services.fallbacks import log_node_config_fallback, get_fallback_node_config
+            log_node_config_fallback(node_name, vertical, "No prompt row found", is_exception=False)
+            return get_fallback_node_config(node_name)
+        
+        prompt_id = prompt_response.data[0]['id']
+        
+        # Get active version
+        version_response = supabase.table('prompt_versions')\
+            .select('content')\
+            .eq('prompt_id', prompt_id)\
+            .eq('is_active', True)\
+            .order('version_number', desc=True)\
+            .limit(1)\
+            .execute()
+        
+        if version_response.data:
+            content = version_response.data[0].get('content', {})
+            # Vue portal saves as 'tools', but SignalWire expects 'functions'
+            # Support both for backward compatibility
+            functions = content.get('functions', []) or content.get('tools', [])
+            config = {
+                'instructions': content.get('instructions', ''),
+                'valid_contexts': content.get('valid_contexts', []),
+                'functions': functions,
+                'step_criteria': content.get('step_criteria', '')
+            }
+            logger.info(f"[DB] Loaded full config for node: {node_name}")
+            logger.info(f"[DB]   - valid_contexts: {config.get('valid_contexts', [])}")
+            logger.info(f"[DB]   - functions: {config.get('functions', [])}")
+            return config
+        
+        # Fallback for missing data
+        from services.fallbacks import log_node_config_fallback, get_fallback_node_config
+        log_node_config_fallback(node_name, vertical, "No active version found for prompt_id", is_exception=False)
+        return get_fallback_node_config(node_name)
+        
+    except Exception as e:
+        # Fallback for exception
+        from services.fallbacks import log_node_config_fallback, get_fallback_node_config
+        log_node_config_fallback(node_name, vertical, f"{type(e).__name__}: {str(e)}", is_exception=True)
+        return get_fallback_node_config(node_name)
+
+
+def get_theme_prompt(vertical: str = "reverse_mortgage") -> Optional[str]:
+    """Get theme prompt (universal personality)"""
+    if not supabase:
+        from services.fallbacks import get_fallback_theme
+        return get_fallback_theme()
+        
+    try:
+        response = supabase.table('theme_prompts')\
+            .select('content_structured, content')\
+            .eq('vertical', vertical)\
+            .eq('is_active', True)\
+            .limit(1)\
+            .execute()
+        
+        if response.data:
+            row = response.data[0]
+            
+            # PREFER: Structured format (content_structured JSONB)
+            if row.get('content_structured'):
+                # Assemble theme from structured sections (identity, output_rules, conversational_flow, tools, guardrails)
+                theme_data = row['content_structured']
+                sections = []
+                if theme_data.get('identity'):
+                    sections.append(theme_data['identity'])
+                if theme_data.get('output_rules'):
+                    sections.append(f"# Output rules\n\n{theme_data['output_rules']}")
+                if theme_data.get('conversational_flow'):
+                    sections.append(f"# Conversational flow\n\n{theme_data['conversational_flow']}")
+                if theme_data.get('tools'):
+                    sections.append(f"# Tools\n\n{theme_data['tools']}")
+                if theme_data.get('guardrails'):
+                    sections.append(f"# Guardrails\n\n{theme_data['guardrails']}")
+                return '\n\n'.join(sections)
+            
+            # FALLBACK: Old format (content TEXT) for backward compatibility
+            if row.get('content'):
+                return row['content']
+        
+        # Fallback for missing data
+        from services.fallbacks import log_theme_fallback, get_fallback_theme
+        log_theme_fallback(vertical, "No rows returned from theme_prompts query", is_exception=False)
+        return get_fallback_theme()
+        
+    except Exception as e:
+        # Fallback for exception
+        from services.fallbacks import log_theme_fallback, get_fallback_theme
+        log_theme_fallback(vertical, f"{type(e).__name__}: {str(e)}", is_exception=True)
+        return get_fallback_theme()
+
+
+def get_active_signalwire_models(vertical: str = 'reverse_mortgage', language: str = 'en-US') -> Dict[str, Any]:
+    """
+    Get active SignalWire models and behavior params from database
+    Returns: {llm_model, stt_model, tts_voice_string, end_of_speech_timeout, attention_timeout, transparent_barge}
+    
+    Per SignalWire docs:
+    - ai_model: Just model name (e.g., "gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1-nano")
+    - openai_asr_engine: Colon format (e.g., "deepgram:nova-2", "deepgram:nova-3")
+    - voice: Dot format (e.g., "elevenlabs.rachel", "amazon.Joanna:neural:en-US")
+    - end_of_speech_timeout: milliseconds (default 700)
+    - attention_timeout: milliseconds (default 5000)
+    - transparent_barge: boolean (default True)
+    """
+    from services.fallbacks import get_fallback_models
+    
+    if not supabase:
+        return {
+            **get_fallback_models(),
+            "end_of_speech_timeout": 700,
+            "attention_timeout": 5000,
+            "transparent_barge": True
+        }
+    
+    try:
+        # Load active LLM model
+        llm_result = supabase.table('signalwire_available_llm_models')\
+            .select('model_id_full')\
+            .eq('is_active', True)\
+            .maybe_single()\
+            .execute()
+        
+        fallbacks = get_fallback_models()
+        
+        if llm_result and llm_result.data:
+            llm_model = llm_result.data.get('model_id_full', fallbacks['llm_model'])
+            logger.info(f"[DB] ✅ Loaded active LLM: {llm_model}")
+        else:
+            llm_model = fallbacks['llm_model']
+            logger.warning(f"[DB] ⚠️ No active LLM model found, using fallback: {llm_model}")
+        
+        # Load active STT model
+        stt_result = supabase.table('signalwire_available_stt_models')\
+            .select('model_id_full')\
+            .eq('is_active', True)\
+            .maybe_single()\
+            .execute()
+        
+        if stt_result and stt_result.data:
+            stt_model = stt_result.data.get('model_id_full', fallbacks['stt_model'])
+            logger.info(f"[DB] ✅ Loaded active STT: {stt_model}")
+        else:
+            stt_model = fallbacks['stt_model']
+            logger.warning(f"[DB] ⚠️ No active STT model found, using fallback: {stt_model}")
+        
+        # Load active TTS voice
+        tts_result = supabase.table('signalwire_available_voices')\
+            .select('voice_id_full')\
+            .eq('is_active', True)\
+            .maybe_single()\
+            .execute()
+        
+        if tts_result and tts_result.data:
+            tts_voice_string = tts_result.data.get('voice_id_full', fallbacks['tts_voice_string'])
+            logger.info(f"[DB] ✅ Loaded active TTS: {tts_voice_string}")
+        else:
+            tts_voice_string = fallbacks['tts_voice_string']
+            logger.warning(f"[DB] ⚠️ No active TTS voice found, using fallback: {tts_voice_string}")
+        
+        # Load behavior params from agent_params table
+        params_result = supabase.table('agent_params')\
+            .select('end_of_speech_timeout, attention_timeout, transparent_barge, temperature, top_p, frequency_penalty, presence_penalty')\
+            .eq('vertical', vertical)\
+            .eq('language', language)\
+            .eq('is_active', True)\
+            .maybe_single()\
+            .execute()
+        
+        # Set defaults
+        end_of_speech_timeout = 700
+        attention_timeout = 5000
+        transparent_barge = True
+        temperature = 0.3  # SDK default - deterministic for booking agent
+        top_p = 1.0  # SDK default
+        frequency_penalty = 0.4  # Reduces repetitive phrasing
+        presence_penalty = 0.2  # Encourages slight variety
+        
+        if params_result and params_result.data:
+            end_of_speech_timeout = params_result.data.get('end_of_speech_timeout', 700)
+            attention_timeout = params_result.data.get('attention_timeout', 5000)
+            transparent_barge = params_result.data.get('transparent_barge', True)
+            temperature = float(params_result.data.get('temperature', 0.3))
+            top_p = float(params_result.data.get('top_p', 1.0))
+            frequency_penalty = float(params_result.data.get('frequency_penalty', 0.4))
+            presence_penalty = float(params_result.data.get('presence_penalty', 0.2))
+            logger.info(f"[DB] ✅ Loaded behavior params: temp={temperature}, top_p={top_p}, freq_pen={frequency_penalty}, pres_pen={presence_penalty}")
+        else:
+            logger.warning(f"[DB] ⚠️ No agent_params found for {vertical}/{language}, using defaults")
+        
+        return {
+            "llm_model": llm_model,
+            "stt_model": stt_model,
+            "tts_voice_string": tts_voice_string,
+            "end_of_speech_timeout": end_of_speech_timeout,
+            "attention_timeout": attention_timeout,
+            "transparent_barge": transparent_barge,
+            "temperature": temperature,
+            "top_p": top_p,
+            "frequency_penalty": frequency_penalty,
+            "presence_penalty": presence_penalty
+        }
+        
+    except Exception as e:
+        logger.error(f"[DB] Failed to load active SignalWire models: {e}, using fallbacks", exc_info=True)
+        return {
+            **get_fallback_models(),
+            "end_of_speech_timeout": 700,
+            "attention_timeout": 5000,
+            "transparent_barge": True
+        }
+
+
+def build_voice_string(engine: str, voice_name: str) -> str:
+    """Build provider-specific voice string per SignalWire format"""
+    formats = {
+        "elevenlabs": f"elevenlabs.{voice_name}",
+        "openai": f"openai.{voice_name}",
+        "google": f"gcloud.{voice_name}",
+        "gcloud": f"gcloud.{voice_name}",
+        "amazon": f"amazon.{voice_name}",
+        "polly": f"amazon.{voice_name}",
+        "azure": voice_name,  # Azure uses full voice code as-is
+        "microsoft": voice_name,
+        "cartesia": f"cartesia.{voice_name}",
+        "rime": f"rime.{voice_name}"
+    }
+    return formats.get(engine.lower(), f"{engine}.{voice_name}")
+
+
+def insert_call_summary(
+    phone: str,
+    lead_id: Optional[str],
+    broker_id: Optional[str],
+    call_id: str,
+    duration_seconds: int,
+    direction: str,
+    outcome: str,
+    summary_data: Dict[str, Any]
+) -> bool:
+    """
+    Insert call summary into interactions table.
+    Called from on_summary callback after call ends.
+    
+    Per SDK Section 6.16.4: Post-prompt data is received after call ends.
+    """
+    if not supabase:
+        logger.warning("[DB] Cannot insert call summary - no Supabase connection")
+        return False
+    
+    try:
+        # Map outcome to interactions.outcome enum values
+        outcome_map = {
+            "booked": "appointment_booked",
+            "not_booked": "neutral",
+            "disqualified": "negative",
+            "wrong_person": "no_response",
+            "transferred": "positive",
+            "callback_requested": "follow_up_needed",
+        }
+        mapped_outcome = outcome_map.get(outcome, "neutral")
+        
+        interaction_data = {
+            "type": "ai_call",
+            "direction": direction,
+            "duration_seconds": duration_seconds,
+            "outcome": mapped_outcome,
+            "content": summary_data.get("summary", ""),
+            "metadata": {
+                "call_id": call_id,
+                "post_prompt_data": summary_data,
+                "qualification_status": summary_data.get("qualification_status"),
+                "objections": summary_data.get("objections_raised", []),
+                "sentiment": summary_data.get("caller_sentiment"),
+                "follow_up_needed": summary_data.get("follow_up_needed", False),
+                "appointment_time": summary_data.get("appointment_time"),
+            }
+        }
+        
+        # Add lead_id if we have it
+        if lead_id:
+            interaction_data["lead_id"] = lead_id
+        
+        # Add broker_id if we have it
+        if broker_id:
+            interaction_data["broker_id"] = broker_id
+        
+        # If appointment was booked, set scheduled_for
+        if summary_data.get("appointment_time"):
+            interaction_data["scheduled_for"] = summary_data["appointment_time"]
+        
+        response = supabase.table("interactions").insert(interaction_data).execute()
+        
+        if response.data:
+            logger.info(f"[DB] ✅ Inserted call summary for call_id: {call_id}, outcome: {mapped_outcome}")
+            return True
+        
+        logger.warning(f"[DB] ⚠️ No data returned when inserting call summary")
+        return False
+        
+    except Exception as e:
+        logger.error(f"[DB] ❌ Error inserting call summary: {e}")
+        return False

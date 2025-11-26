@@ -1,0 +1,21 @@
+# SignalWire AI Agents SDK v1.0.2
+signalwire-agents>=1.0.2
+
+# Database
+supabase>=2.0.0
+
+# HTTP client for external APIs (Nylas booking)
+httpx>=0.25.0
+
+# Environment variables
+python-dotenv>=1.0.1
+
+# Timezone support (required for datetime skill)
+pytz>=2023.3
+
+# Date parsing for booking API
+python-dateutil>=2.8.2
+
+# ASGI server (for combined SWAIG + REST API)
+uvicorn>=0.23.0
+starlette>=0.27.0

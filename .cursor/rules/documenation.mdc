@@ -1,0 +1,7 @@
+---
+alwaysApply: true
+---
+##CRITICAL aiagentssdk_manual.md is the source of truth for documentation
+
+do not infer or pattern match from anyting in the reference file, or online documentation
+

@@ -1,0 +1,2 @@
+# REST API endpoints for MCP/n8n integration
+
