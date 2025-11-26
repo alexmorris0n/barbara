@@ -65,6 +65,72 @@ const parsedAllowedAddresses = SIGNALWIRE_ALLOWED_ADDRESSES
   .map(addr => addr.trim())
   .filter(Boolean);
 
+// Supabase config for looking up broker phone numbers
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+
+/**
+ * Get the broker's SignalWire phone number for outbound calls
+ * Looks up: lead_id -> assigned_broker_id -> phone_numbers.assigned_broker_id
+ * Returns the first active phone number for the broker, or null if not found
+ */
+async function getBrokerPhoneNumber(leadId, brokerId = null) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    app.log.warn('⚠️ Supabase not configured - cannot look up broker phone');
+    return null;
+  }
+
+  try {
+    let brokerIdToUse = brokerId;
+
+    // If no broker_id provided, look it up from the lead
+    if (!brokerIdToUse && leadId) {
+      const leadResponse = await fetch(
+        `${SUPABASE_URL}/rest/v1/leads?id=eq.${leadId}&select=assigned_broker_id`,
+        {
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+          }
+        }
+      );
+      const leads = await leadResponse.json();
+      if (leads.length > 0 && leads[0].assigned_broker_id) {
+        brokerIdToUse = leads[0].assigned_broker_id;
+        app.log.info({ lead_id: leadId, broker_id: brokerIdToUse }, '📍 Found broker for lead');
+      }
+    }
+
+    if (!brokerIdToUse) {
+      app.log.warn({ lead_id: leadId }, '⚠️ No broker_id found for lead');
+      return null;
+    }
+
+    // Look up the broker's phone numbers
+    const phoneResponse = await fetch(
+      `${SUPABASE_URL}/rest/v1/phone_numbers?assigned_broker_id=eq.${brokerIdToUse}&is_active=eq.true&select=phone_number,label&order=label.asc&limit=1`,
+      {
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+        }
+      }
+    );
+    const phones = await phoneResponse.json();
+    
+    if (phones.length > 0) {
+      app.log.info({ broker_id: brokerIdToUse, phone: phones[0].phone_number, label: phones[0].label }, '📞 Found broker SignalWire number');
+      return phones[0].phone_number;
+    }
+
+    app.log.warn({ broker_id: brokerIdToUse }, '⚠️ No phone numbers found for broker');
+    return null;
+  } catch (error) {
+    app.log.error({ error: error.message }, '❌ Error looking up broker phone');
+    return null;
+  }
+}
+
 function getSignalWireAuthHeader() {
   return `Basic ${Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64')}`;
 }
@@ -536,10 +602,11 @@ async function executeTool(name, args) {
       app.log.info({ 
         to_phone: args.to_phone, 
         lead_id: args.lead_id,
-        from_phone: args.from_phone || SIGNALWIRE_PHONE_NUMBER,
+        broker_id: args.broker_id,
+        from_phone_arg: args.from_phone,
         space_url: SIGNALWIRE_SPACE_URL,
         agent_url: BARBARA_AGENT_URL
-      }, '📞 Creating outbound call via SignalWire REST API');
+      }, '📞 Creating outbound call via SignalWire SWML Calling API');
       
       if (!SIGNALWIRE_FEATURES_ENABLED) {
         app.log.error({
@@ -562,6 +629,25 @@ async function executeTool(name, args) {
       
       try {
         const auth = Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64');
+        
+        // Determine the FROM phone number:
+        // 1. If from_phone explicitly provided, use that
+        // 2. Otherwise, look up broker's SignalWire number from database
+        // 3. Fall back to default SIGNALWIRE_PHONE_NUMBER
+        let fromPhone = args.from_phone;
+        let brokerIdUsed = args.broker_id;
+        
+        if (!fromPhone) {
+          // Look up broker's phone number from database
+          const brokerPhone = await getBrokerPhoneNumber(args.lead_id, args.broker_id);
+          if (brokerPhone) {
+            fromPhone = brokerPhone;
+            app.log.info({ broker_phone: brokerPhone }, '✅ Using broker SignalWire number');
+          } else {
+            fromPhone = SIGNALWIRE_PHONE_NUMBER;
+            app.log.info({ default_phone: fromPhone }, '⚠️ Using default SignalWire number (no broker number found)');
+          }
+        }
         
         // Build the agent URL with lead context
         // This URL must serve SWML (not LaML)
@@ -591,37 +677,43 @@ async function executeTool(name, args) {
         
         app.log.info({ normalized_phone: toPhone }, '📱 Normalized phone number');
         
-        // Use SignalWire REST API (LaML compatible) - more universally available
-        // POST /api/laml/2010-04-01/Accounts/{ProjectID}/Calls.json
-        const apiUrl = `${SIGNALWIRE_SPACE_URL}/api/laml/2010-04-01/Accounts/${SIGNALWIRE_PROJECT_ID}/Calls.json`;
+        // Use SignalWire Calling API (SWML-native) - sends JSON to SWML endpoints
+        // POST /api/calling/calls
+        const apiUrl = `${SIGNALWIRE_SPACE_URL}/api/calling/calls`;
         
-        app.log.info({ api_url: apiUrl }, '🔗 SignalWire REST API URL');
+        app.log.info({ api_url: apiUrl }, '🔗 SignalWire Calling API URL');
         
-        // Build form data for REST API (LaML uses form encoding, not JSON)
-        const formData = new URLSearchParams();
-        formData.append('To', toPhone);
-        formData.append('From', args.from_phone || SIGNALWIRE_PHONE_NUMBER);
-        // Use Url parameter with SWML endpoint - SignalWire will fetch SWML from this URL
-        formData.append('Url', agentUrl.toString());
-        // Tell SignalWire the URL returns SWML, not LaML/TwiML
-        formData.append('MachineDetection', 'Enable');
-        formData.append('MachineDetectionTimeout', '5');
+        // Build JSON payload for Calling API (SWML-native)
+        const callPayload = {
+          command: 'dial',
+          params: {
+            url: agentUrl.toString(),  // SWML endpoint URL
+            from: fromPhone,
+            to: toPhone,
+            caller_id: fromPhone,
+            // Optional: timeout and AMD settings
+            timeout: 60,
+            max_duration: 3600
+          }
+        };
         
         app.log.info({ 
-          form_data: {
-            To: toPhone,
-            From: args.from_phone || SIGNALWIRE_PHONE_NUMBER,
-            Url: agentUrl.toString()
+          payload: {
+            command: callPayload.command,
+            to: callPayload.params.to,
+            from: callPayload.params.from,
+            url: callPayload.params.url
           }
-        }, '📋 Request form data');
+        }, '📋 Request JSON payload');
         
         const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
             'Authorization': `Basic ${auth}`
           },
-          body: formData.toString()
+          body: JSON.stringify(callPayload)
         });
         
         const responseText = await response.text();
@@ -629,7 +721,7 @@ async function executeTool(name, args) {
           status: response.status, 
           statusText: response.statusText,
           response_text: responseText.substring(0, 500) 
-        }, '📞 SignalWire REST API response');
+        }, '📞 SignalWire Calling API response');
         
         let result;
         try {
@@ -640,27 +732,27 @@ async function executeTool(name, args) {
         }
         
         if (!response.ok) {
-          app.log.error({ result, status: response.status }, '❌ SignalWire API error');
-          throw new Error(result.message || result.error_message || result.code || `Call creation failed (${response.status})`);
+          app.log.error({ result, status: response.status }, '❌ SignalWire Calling API error');
+          throw new Error(result.message || result.error_message || result.error || result.code || `Call creation failed (${response.status})`);
         }
         
-        // REST API returns 'sid' for call ID
-        const callId = result.sid || result.call_sid || result.id;
+        // Calling API returns 'id' for call ID
+        const callId = result.id || result.call_id || result.sid;
         
-        app.log.info({ call_id: callId, result }, '✅ Outbound call created successfully');
+        app.log.info({ call_id: callId, result }, '✅ Outbound call created via SWML Calling API');
         
         return {
           content: [
             {
               type: 'text',
-              text: `✅ Outbound Call Initiated!\n\n` +
-                    `📞 Call SID: ${callId || 'pending'}\n` +
-                    `📱 From: ${args.from_phone || SIGNALWIRE_PHONE_NUMBER}\n` +
+              text: `✅ Outbound Call Initiated (SWML)!\n\n` +
+                    `📞 Call ID: ${callId || 'pending'}\n` +
+                    `📱 From: ${fromPhone}\n` +
                     `📱 To: ${toPhone}\n` +
                     `👤 Lead ID: ${args.lead_id}\n` +
                     `🤖 Agent: Barbara (SignalWire AI SDK)\n` +
                     `🔗 SWML URL: ${agentUrl.toString()}\n` +
-                    `💬 Status: ${result.status || 'queued'}`
+                    `💬 Status: ${result.state || result.status || 'created'}`
             }
           ]
         };
