@@ -228,13 +228,15 @@ Only using "math" skill.
 
 ## 🟠 OUTBOUND CALL IMPROVEMENTS - After Core Fix
 
-### O1. [ ] Different Greeting for Outbound
+### O1. [~] Different Greeting for Outbound (PARTIAL)
 **Impact:** Outbound shouldn't use "Hello, this is Barbara" - should ask for the lead by name  
 **Effort:** Low
 
+**Status:** `call_direction` IS in global_data (line 343), but greet node needs update.
+
 **Implementation:**
-- [ ] Pass `call_direction: "outbound"` in global_data ✅ (already done)
-- [ ] Update greet node to check `${global_data.call_direction}`
+- [x] Pass `call_direction: "outbound"` in global_data (barbara_agent.py:343)
+- [ ] Update greet node in Supabase to check `${global_data.call_direction}`
 - [ ] Outbound: "Hello, may I speak with ${global_data.caller_name}?"
 - [ ] Inbound: "Hello, this is Barbara from Equity Connect..."
 
@@ -244,6 +246,8 @@ Only using "math" skill.
 **Impact:** Faster SWML response = less delay before Barbara speaks  
 **Effort:** Medium  
 **Section:** 3.18.8
+
+**Status:** NOT IMPLEMENTED - no caching exists
 
 Currently: MCP triggers call → SignalWire requests SWML → Agent loads data → SWML returned (slow)  
 Better: MCP pre-loads data → caches it → triggers call → instant SWML response
@@ -261,16 +265,20 @@ Better: MCP pre-loads data → caches it → triggers call → instant SWML resp
 **Impact:** Don't rush seniors who just answered their phone  
 **Effort:** Low
 
+**Status:** NOT IMPLEMENTED - no direction-based timing
+
 **Implementation:**
-- [ ] `wait_for_user: True` for outbound (wait for them to say hello)
-- [ ] Longer `end_of_speech_timeout` for outbound (they may be confused)
-- [ ] Set in `on_swml_request` based on direction
+- [ ] Longer `end_of_speech_timeout` for outbound (1000ms vs 700ms)
+- [ ] Longer `attention_timeout` for outbound (15000ms vs 5000ms)
+- [ ] Set via `self.set_params()` in `on_swml_request` when direction == "outbound"
 
 ---
 
 ### O4. [ ] AMD (Answering Machine Detection) Handling
 **Impact:** Don't waste time talking to voicemail  
 **Effort:** Medium
+
+**Status:** NOT IMPLEMENTED - no AnsweredBy check
 
 **Implementation:**
 - [ ] Check `AnsweredBy` in request_data
@@ -280,14 +288,16 @@ Better: MCP pre-loads data → caches it → triggers call → instant SWML resp
 
 ---
 
-### O5. [ ] Outbound Caller ID
+### O5. [x] Outbound Caller ID ✅ DONE
 **Impact:** Lead sees broker's local number, more likely to answer  
-**Effort:** Low (already partially done)
+**Effort:** Low
+
+**Status:** IMPLEMENTED in MCP
 
 **Implementation:**
-- [x] MCP looks up broker's SignalWire number
+- [x] MCP has `getBrokerPhoneNumber()` function (index.js:78)
+- [x] Looks up broker's SignalWire number from `phone_numbers` table
 - [x] Passes as `from` in dial command
-- [ ] Verify E.164 format consistency
 
 ---
 
