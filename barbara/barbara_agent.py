@@ -1240,32 +1240,12 @@ When booking, offer the next available slot first. If they need a different time
 
 # Entry point
 if __name__ == "__main__":
-    import uvicorn
-    
     # Create the Barbara agent
     agent = BarbaraAgent()
     
-    # Import REST API routes and add them to the agent's FastAPI app
-    try:
-        from api.tools import routes as api_routes
-        
-        # Per SDK manual: agent.get_app() returns the FastAPI application instance
-        # We can add our REST API routes directly to it
-        app = agent.get_app()
-        
-        # Add REST API routes to the agent's FastAPI app
-        for route in api_routes:
-            app.add_route(route.path, route.endpoint, methods=route.methods)
-        
-        logger.info("[BARBARA] Starting combined server (SWAIG + REST API)")
-        logger.info("[BARBARA]   SWAIG: /agent/barbara")
-        logger.info("[BARBARA]   REST:  /api/*")
-        
-        # Run the agent (which now includes REST API routes)
-        agent.run()
-        
-    except ImportError as e:
-        # Fallback: run agent only (no REST API)
-        logger.warning(f"[BARBARA] REST API not available: {e}")
-        logger.info("[BARBARA] Starting agent-only server")
-        agent.run()
+    logger.info("[BARBARA] Starting agent server")
+    logger.info("[BARBARA]   SWAIG endpoint: /agent/barbara")
+    logger.info("[BARBARA]   Outbound calls: use lead_id and direction=outbound query params")
+    
+    # Run the agent
+    agent.run()

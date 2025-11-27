@@ -625,23 +625,30 @@ async function executeTool(name, args) {
     
     case 'create_outbound_call': {
       // =======================================================================
-      // PRE-WARMED OUTBOUND CALLS
+      // OUTBOUND CALLS VIA SIGNALWIRE SWML CALLING API
       // =======================================================================
-      // Instead of calling SignalWire directly, we call Barbara's /api/outbound
-      // endpoint which:
-      // 1. Pre-loads ALL data (lead, broker, models, availability)
-      // 2. Caches it with a session_id  
-      // 3. Triggers SignalWire with session_id in URL
-      // 4. When SignalWire requests SWML, Barbara responds INSTANTLY (cached!)
-      //
-      // This eliminates the 2-3 second delay where users say "hello? hello?"
+      // Calls SignalWire directly with Barbara agent as the SWML webhook.
+      // Barbara uses query params (lead_id, direction) to load the right data.
       // =======================================================================
       
       app.log.info({ 
         lead_id: args.lead_id,
         to_phone: args.to_phone,
-        from_phone: args.from_phone
-      }, '📞 Creating outbound call via Barbara /api/outbound (pre-warmed)');
+        from_phone: args.from_phone,
+        broker_id: args.broker_id
+      }, '📞 Creating outbound call via SignalWire SWML API');
+      
+      if (!SIGNALWIRE_FEATURES_ENABLED) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `❌ Outbound call failed: SignalWire credentials not configured`
+            }
+          ],
+          isError: true
+        };
+      }
       
       if (!BARBARA_AGENT_URL) {
         return {
@@ -656,78 +663,95 @@ async function executeTool(name, args) {
       }
       
       try {
-        // Build the Barbara /api/outbound URL
-        // Strip auth from URL for API endpoint (it uses API key auth)
-        let barbaraBaseUrl = BARBARA_AGENT_URL.replace(/\/agent\/barbara.*$/, '');
-        // Remove basic auth credentials if present in URL
-        barbaraBaseUrl = barbaraBaseUrl.replace(/\/\/[^:]+:[^@]+@/, '//');
-        const outboundUrl = `${barbaraBaseUrl}/api/outbound`;
-        
-        app.log.info({ outbound_url: outboundUrl }, '🔗 Barbara /api/outbound URL');
-        
-        // Build request payload - Barbara will handle everything else
-        const payload = {
-          lead_id: args.lead_id
+        // Normalize phone number to E.164
+        const normalizeE164 = (phone) => {
+          if (!phone) return null;
+          const digits = phone.replace(/\D/g, '');
+          if (digits.length === 10) return `+1${digits}`;
+          if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+          if (!phone.startsWith('+')) return `+${digits}`;
+          return phone;
         };
         
-        // Optional overrides
-        if (args.to_phone) {
-          payload.to_phone = args.to_phone;
-        }
-        if (args.from_phone) {
-          payload.from_phone = args.from_phone;
+        const toPhone = normalizeE164(args.to_phone);
+        if (!toPhone) {
+          throw new Error('Invalid to_phone number');
         }
         
-        app.log.info({ payload }, '📋 Request payload');
+        // Get broker's SignalWire number or use default
+        let fromPhone = args.from_phone;
+        if (!fromPhone) {
+          const brokerPhone = await getBrokerPhoneNumber(args.lead_id, args.broker_id);
+          fromPhone = brokerPhone || SIGNALWIRE_PHONE_NUMBER;
+        }
+        fromPhone = normalizeE164(fromPhone);
         
-        const response = await fetch(outboundUrl, {
+        app.log.info({ 
+          to_phone: toPhone, 
+          from_phone: fromPhone,
+          using_broker_phone: fromPhone !== SIGNALWIRE_PHONE_NUMBER
+        }, '📱 Phone numbers resolved');
+        
+        // Build Barbara agent URL with query params for outbound context
+        const agentUrl = new URL(BARBARA_AGENT_URL);
+        agentUrl.searchParams.set('lead_id', args.lead_id);
+        agentUrl.searchParams.set('direction', 'outbound');
+        
+        app.log.info({ agent_url: agentUrl.toString() }, '🔗 Barbara agent URL');
+        
+        // Call SignalWire SWML Calling API
+        const apiUrl = `${SIGNALWIRE_SPACE_URL}/api/calling/calls`;
+        
+        const requestBody = {
+          url: agentUrl.toString(),
+          from: fromPhone,
+          to: toPhone,
+          timeout: 60
+        };
+        
+        app.log.info({ api_url: apiUrl, request_body: requestBody }, '📤 Calling SignalWire');
+        
+        const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Accept': 'application/json'
-            // Note: API key auth can be added here if needed
+            'Authorization': getSignalWireAuthHeader()
           },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(requestBody)
         });
         
         const responseText = await response.text();
         app.log.info({ 
           status: response.status, 
-          response_preview: responseText.substring(0, 500) 
-        }, '📞 Barbara /api/outbound response');
+          response: responseText.substring(0, 500) 
+        }, '📥 SignalWire response');
+        
+        if (!response.ok) {
+          throw new Error(`SignalWire API error (${response.status}): ${responseText}`);
+        }
         
         let result;
         try {
           result = JSON.parse(responseText);
         } catch (e) {
-          app.log.error({ responseText }, '❌ Failed to parse Barbara response as JSON');
-          throw new Error(`Barbara returned invalid JSON (${response.status}): ${responseText.substring(0, 200)}`);
-        }
-        
-        if (!response.ok || !result.success) {
-          app.log.error({ result, status: response.status }, '❌ Barbara /api/outbound error');
-          throw new Error(result.error || result.message || `Call creation failed (${response.status})`);
+          throw new Error(`Invalid JSON from SignalWire: ${responseText.substring(0, 200)}`);
         }
         
         app.log.info({ 
           call_id: result.call_id,
-          session_id: result.session_id,
-          from: result.from_phone,
-          to: result.to_phone
-        }, '✅ Outbound call initiated via Barbara (pre-warmed!)');
+          status: result.status
+        }, '✅ Outbound call initiated');
         
         return {
           content: [
             {
               type: 'text',
-              text: `✅ Outbound Call Initiated (Pre-Warmed)!\n\n` +
-                    `📞 Call ID: ${result.call_id || 'pending'}\n` +
-                    `🔑 Session: ${result.session_id}\n` +
-                    `📱 From: ${result.from_phone}\n` +
-                    `📱 To: ${result.to_phone}\n` +
-                    `👤 Lead: ${result.lead_name || args.lead_id}\n` +
-                    `👔 Broker: ${result.broker_name || 'N/A'}\n` +
-                    `⚡ Status: Data pre-loaded - instant response when answered!`
+              text: `✅ Outbound Call Initiated!\n\n` +
+                    `📞 Call ID: ${result.call_id}\n` +
+                    `📱 From: ${fromPhone}\n` +
+                    `📱 To: ${toPhone}\n` +
+                    `👤 Lead ID: ${args.lead_id}\n` +
+                    `📊 Status: ${result.status || 'queued'}`
             }
           ]
         };
