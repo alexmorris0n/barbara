@@ -768,12 +768,18 @@ async def trigger_outbound_call(request: Request) -> JSONResponse:
     # =========================================================================
     
     # Use existing env var names (already set on Fly)
-    sw_space = os.getenv("SIGNALWIRE_SPACE")  # Just the space name, not full URL
+    sw_space = os.getenv("SIGNALWIRE_SPACE")  # Could be "space" or "space.signalwire.com"
     sw_project_id = os.getenv("SIGNALWIRE_PROJECT_ID")
     sw_api_token = os.getenv("SIGNALWIRE_TOKEN")  # Note: SIGNALWIRE_TOKEN not API_TOKEN
     
-    # Build full space URL from space name
-    sw_space_url = f"https://{sw_space}.signalwire.com" if sw_space else None
+    # Build full space URL - handle both "space" and "space.signalwire.com" formats
+    if sw_space:
+        if sw_space.endswith(".signalwire.com"):
+            sw_space_url = f"https://{sw_space}"
+        else:
+            sw_space_url = f"https://{sw_space}.signalwire.com"
+    else:
+        sw_space_url = None
     
     if not all([sw_space, sw_project_id, sw_api_token]):
         logger.error(f"[OUTBOUND] Missing SignalWire creds: space={bool(sw_space)}, project={bool(sw_project_id)}, token={bool(sw_api_token)}")
