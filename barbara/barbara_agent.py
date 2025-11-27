@@ -1241,40 +1241,28 @@ When booking, offer the next available slot first. If they need a different time
 # Entry point
 if __name__ == "__main__":
     import uvicorn
-    from starlette.applications import Starlette
-    from starlette.routing import Mount
-    from starlette.middleware import Middleware
-    from starlette.middleware.cors import CORSMiddleware
     
     # Create the Barbara agent
     agent = BarbaraAgent()
     
-    # Import REST API routes
+    # Import REST API routes and add them to the agent's FastAPI app
     try:
         from api.tools import routes as api_routes
         
-        # Create combined ASGI app
-        # Agent handles /agent/* (SWAIG), API handles /api/* (REST)
-        middleware = [
-            Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-        ]
+        # Per SDK manual: agent.get_app() returns the FastAPI application instance
+        # We can add our REST API routes directly to it
+        app = agent.get_app()
         
-        combined_app = Starlette(
-            routes=[
-                Mount("/agent", app=agent),  # SWAIG endpoints
-                *api_routes,  # REST API endpoints (/api/*)
-            ],
-            middleware=middleware
-        )
+        # Add REST API routes to the agent's FastAPI app
+        for route in api_routes:
+            app.add_route(route.path, route.endpoint, methods=route.methods)
         
         logger.info("[BARBARA] Starting combined server (SWAIG + REST API)")
         logger.info("[BARBARA]   SWAIG: /agent/barbara")
-        logger.info("[BARBARA]   REST:  /api/tools/*")
+        logger.info("[BARBARA]   REST:  /api/*")
         
-        port = int(os.getenv("PORT", 3000))
-        host = os.getenv("HOST", "0.0.0.0")
-        
-        uvicorn.run(combined_app, host=host, port=port)
+        # Run the agent (which now includes REST API routes)
+        agent.run()
         
     except ImportError as e:
         # Fallback: run agent only (no REST API)
