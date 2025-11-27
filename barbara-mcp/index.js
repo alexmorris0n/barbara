@@ -579,38 +579,108 @@ async function executeTool(name, args) {
     }
     
     case 'update_lead_info': {
-      app.log.info({ lead_id: args.lead_id, updates: Object.keys(args).filter(k => k !== 'lead_id') }, '📝 Updating lead info');
+      const updateFields = Object.keys(args).filter(k => !['lead_id', 'toolCallId'].includes(k));
+      app.log.info({ lead_id: args.lead_id, updates: updateFields }, '📝 Updating lead info');
+      
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+        return {
+          content: [{ type: 'text', text: '❌ Lead info update failed: Supabase not configured' }],
+          isError: true
+        };
+      }
+      
+      if (!args.lead_id) {
+        return {
+          content: [{ type: 'text', text: '❌ Lead info update failed: lead_id is required' }],
+          isError: true
+        };
+      }
       
       try {
-        const response = await fetch(`${BRIDGE_URL}/api/tools/update_lead_info`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${BRIDGE_API_KEY}`
-          },
-          body: JSON.stringify(args)
-        });
+        // Map incoming args to leads table columns
+        const leadUpdate = {};
+        if (args.first_name) leadUpdate.first_name = args.first_name;
+        if (args.last_name) leadUpdate.last_name = args.last_name;
+        if (args.status) leadUpdate.status = args.status;
+        if (args.property_address) leadUpdate.property_address = args.property_address;
+        if (args.property_city) leadUpdate.property_city = args.property_city;
+        if (args.property_state) leadUpdate.property_state = args.property_state;
+        if (args.property_zip) leadUpdate.property_zip = args.property_zip;
+        if (args.property_value) leadUpdate.property_value = args.property_value;
+        if (args.estimated_equity) leadUpdate.estimated_equity = args.estimated_equity;
+        if (args.age) leadUpdate.age = args.age;
         
-        const result = await response.json();
-        
-        if (result.success) {
-          app.log.info('✅ Lead info updated');
-          const updates = Object.keys(args).filter(k => k !== 'lead_id');
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `✅ Lead Info Updated Successfully!\n\n` +
-                      `👤 Lead ID: ${args.lead_id}\n` +
-                      `📝 Updated fields: ${updates.join(', ')}`
-              }
-            ]
-          };
-        } else {
-          throw new Error(result.error || 'Lead info update failed');
+        // Update leads table if we have lead fields
+        if (Object.keys(leadUpdate).length > 0) {
+          leadUpdate.updated_at = new Date().toISOString();
+          
+          const response = await fetch(
+            `${SUPABASE_URL}/rest/v1/leads?id=eq.${args.lead_id}`,
+            {
+              method: 'PATCH',
+              headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+              },
+              body: JSON.stringify(leadUpdate)
+            }
+          );
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Supabase error: ${errorText}`);
+          }
         }
+        
+        // Handle phone number updates separately (phone_numbers table)
+        if (args.primary_phone || args.e164_phone) {
+          const phoneNumber = args.e164_phone || args.primary_phone;
+          // Normalize to E.164
+          const digits = phoneNumber.replace(/\D/g, '');
+          const e164 = digits.length === 10 ? `+1${digits}` : 
+                       digits.length === 11 && digits.startsWith('1') ? `+${digits}` : 
+                       phoneNumber.startsWith('+') ? phoneNumber : `+${digits}`;
+          
+          // Upsert phone number
+          const phoneResponse = await fetch(
+            `${SUPABASE_URL}/rest/v1/phone_numbers`,
+            {
+              method: 'POST',
+              headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'resolution=merge-duplicates'
+              },
+              body: JSON.stringify({
+                lead_id: args.lead_id,
+                phone_number: e164,
+                label: 'primary',
+                is_active: true
+              })
+            }
+          );
+          
+          if (!phoneResponse.ok) {
+            app.log.warn({ status: phoneResponse.status }, '⚠️ Phone number update may have failed');
+          }
+        }
+        
+        app.log.info('✅ Lead info updated');
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `✅ Lead Info Updated Successfully!\n\n` +
+                    `👤 Lead ID: ${args.lead_id}\n` +
+                    `📝 Updated fields: ${updateFields.join(', ')}`
+            }
+          ]
+        };
       } catch (error) {
-        app.log.error({ error }, '❌ Lead info update error');
+        app.log.error({ error: error.message }, '❌ Lead info update error');
         return {
           content: [
             {
@@ -699,25 +769,25 @@ async function executeTool(name, args) {
         
         app.log.info({ agent_url: agentUrl.toString() }, '🔗 Barbara agent URL');
         
-        // Call SignalWire SWML Calling API
-        const apiUrl = `${SIGNALWIRE_SPACE_URL}/api/calling/calls`;
+        // Use SignalWire REST API (LaML) - more universally available
+        const apiUrl = `${SIGNALWIRE_SPACE_URL}/api/laml/2010-04-01/Accounts/${SIGNALWIRE_PROJECT_ID}/Calls.json`;
         
-        const requestBody = {
-          url: agentUrl.toString(),
-          from: fromPhone,
-          to: toPhone,
-          timeout: 60
-        };
+        // REST API uses form-encoded data
+        const formData = new URLSearchParams();
+        formData.append('From', fromPhone);
+        formData.append('To', toPhone);
+        formData.append('Url', agentUrl.toString());
+        formData.append('Timeout', '60');
         
-        app.log.info({ api_url: apiUrl, request_body: requestBody }, '📤 Calling SignalWire');
+        app.log.info({ api_url: apiUrl, from: fromPhone, to: toPhone }, '📤 Calling SignalWire REST API');
         
         const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
+            'Content-Type': 'application/x-www-form-urlencoded',
             'Authorization': getSignalWireAuthHeader()
           },
-          body: JSON.stringify(requestBody)
+          body: formData.toString()
         });
         
         const responseText = await response.text();
