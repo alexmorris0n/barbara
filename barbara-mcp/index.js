@@ -30,13 +30,11 @@ const BRIDGE_URL = process.env.BRIDGE_URL || 'https://bridge.northflank.app';
 const BRIDGE_API_KEY = process.env.BRIDGE_API_KEY;
 
 // SignalWire credentials for outbound calls
+// IMPORTANT: Use the original env var names that are confirmed working in Fly
 const SIGNALWIRE_PROJECT_ID = process.env.SIGNALWIRE_PROJECT_ID;
-const SIGNALWIRE_TOKEN = process.env.SIGNALWIRE_TOKEN;
-const SIGNALWIRE_SPACE = process.env.SIGNALWIRE_SPACE;
+const SIGNALWIRE_API_TOKEN = process.env.SIGNALWIRE_API_TOKEN;
+const SIGNALWIRE_SPACE_URL = process.env.SIGNALWIRE_SPACE_URL;
 const SIGNALWIRE_PHONE_NUMBER = process.env.SIGNALWIRE_PHONE_NUMBER;
-
-// Construct space URL from space name
-const SIGNALWIRE_SPACE_URL = SIGNALWIRE_SPACE ? `https://${SIGNALWIRE_SPACE}.signalwire.com` : null;
 
 // Barbara Agent URL (SignalWire AI SDK)
 // Must point to the SWML endpoint: /agent/barbara
@@ -44,8 +42,8 @@ const BARBARA_AGENT_URL = process.env.BARBARA_AGENT_URL || 'https://barbara-agen
 
 const SIGNALWIRE_FEATURES_ENABLED = Boolean(
   SIGNALWIRE_PROJECT_ID &&
-  SIGNALWIRE_TOKEN &&
-  SIGNALWIRE_SPACE &&
+  SIGNALWIRE_API_TOKEN &&
+  SIGNALWIRE_SPACE_URL &&
   SIGNALWIRE_PHONE_NUMBER
 );
 
@@ -56,7 +54,7 @@ if (!BRIDGE_API_KEY) {
 
 if (!SIGNALWIRE_FEATURES_ENABLED) {
   app.log.warn('⚠️  SignalWire credentials not fully configured - outbound calls will fail');
-  app.log.warn('   Required: SIGNALWIRE_PROJECT_ID, SIGNALWIRE_TOKEN, SIGNALWIRE_SPACE, SIGNALWIRE_PHONE_NUMBER');
+  app.log.warn('   Required: SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN, SIGNALWIRE_SPACE_URL, SIGNALWIRE_PHONE_NUMBER');
 }
 
 // SignalWire Fabric guest token config
@@ -160,7 +158,7 @@ async function getBrokerPhoneNumber(leadId, brokerId = null) {
 }
 
 function getSignalWireAuthHeader() {
-  return `Basic ${Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_TOKEN}`).toString('base64')}`;
+  return `Basic ${Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64')}`;
 }
 
 function buildSignalWireUrl(path) {
