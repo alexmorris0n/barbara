@@ -76,33 +76,6 @@ def get_lead_by_phone(phone: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def get_lead_by_id(lead_id: str) -> Optional[Dict[str, Any]]:
-    """
-    Get lead by UUID
-    Used for outbound calls where lead_id is passed in URL params
-    """
-    if not supabase or not lead_id:
-        return None
-    
-    try:
-        response = supabase.table('leads')\
-            .select('*, brokers!assigned_broker_id(id, contact_name, company_name, phone, nmls_number, nylas_grant_id, timezone, business_hours_start, business_hours_end, business_days, appointment_duration_minutes, buffer_between_appointments_minutes, minimum_booking_lead_time_minutes)')\
-            .eq('id', lead_id)\
-            .limit(1)\
-            .execute()
-        
-        if response.data:
-            logger.info(f"[DB] Lead found by ID: {response.data[0].get('first_name', 'Unknown')} (id: {lead_id})")
-            return response.data[0]
-        
-        logger.info(f"[DB] No lead found for ID: {lead_id}")
-        return None
-        
-    except Exception as e:
-        logger.error(f"[DB] Error fetching lead by ID: {e}")
-        return None
-
-
 def get_conversation_state(phone: str) -> Optional[Dict[str, Any]]:
     """Get or create conversation state"""
     if not supabase:

@@ -23,7 +23,6 @@ from signalwire_agents.core.function_result import SwaigFunctionResult
 # Import services
 from services.database import (
     get_lead_by_phone,
-    get_lead_by_id,
     get_conversation_state,
     update_conversation_state,
     get_theme_prompt,
@@ -172,7 +171,7 @@ Rules:
         
         logger.info("[BARBARA] Agent initialized with %d contexts", len(ALL_NODES))
     
-    def on_swml_request(self, request_data: dict, callback_path: str = None, request = None, *args, **kwargs) -> None:
+    def on_swml_request(self, request_data: dict, *args, **kwargs) -> None:
         # NOTE: SDK passes 4 args but manual documents 2. Using *args, **kwargs as workaround.
         """
         Per Section 3.18.3 (The on_swml_request Method):
@@ -181,10 +180,6 @@ Rules:
         
         Per Section 3.18.8: Database calls are sync to avoid latency issues.
         
-        OPTIMIZATION: For outbound calls, check for pre-warmed session_id first.
-        The /api/outbound endpoint pre-loads all data before placing the call,
-        so we can skip DB queries entirely and respond instantly.
-        
         request_data contains:
         - call_id: Unique call identifier
         - caller_id_num: Caller's phone number
@@ -192,145 +187,20 @@ Rules:
         - called_id_num: Number that was called
         - direction: "inbound" or "outbound"
         """
-        # Extract call data from SignalWire request
+        # Extract phone number from SignalWire request
+        # NOTE: SDK manual says caller_id_num, but SignalWire actually sends nested in 'call' object
         call_data = request_data.get("call", {})
+        caller_num = (
+            call_data.get("from") or 
+            call_data.get("from_number") or
+            request_data.get("caller_id_num") or  # Fallback per SDK manual
+            ""
+        )
         direction = call_data.get("direction") or request_data.get("direction", "inbound")
         
-        # Get query params from URL (for outbound calls with session_id/lead_id)
-        query_params = {}
-        if request:
-            try:
-                query_params = dict(request.query_params) if hasattr(request, 'query_params') else {}
-            except:
-                pass
+        phone = normalize_phone(caller_num) if caller_num else "unknown"
         
-        session_id = query_params.get("session_id")
-        lead_id_from_url = query_params.get("lead_id")
-        direction_from_url = query_params.get("direction", direction)
-        
-        # Use direction from URL if provided (more reliable for outbound)
-        if direction_from_url:
-            direction = direction_from_url
-        
-        # =====================================================================
-        # CHECK FOR PRE-WARMED SESSION (outbound calls via /api/outbound)
-        # This is the fast path - all data already loaded, skip DB queries!
-        # =====================================================================
-        cached_session = None
-        if session_id:
-            try:
-                from api.tools import get_cached_session
-                cached_session = get_cached_session(session_id)
-                if cached_session:
-                    logger.info(f"[BARBARA] ⚡ Using pre-warmed session {session_id} - INSTANT RESPONSE!")
-            except ImportError:
-                logger.warning("[BARBARA] Could not import session cache")
-        
-        if cached_session:
-            # FAST PATH: Use cached data
-            lead = cached_session.get("lead")
-            broker = cached_session.get("broker", {})
-            state = cached_session.get("conversation_state")
-            theme_prompt = cached_session.get("theme_prompt")
-            models = cached_session.get("models", {})
-            phone = cached_session.get("normalized_phone", "unknown")
-            available_slots = cached_session.get("availability_slots", [])
-            direction = cached_session.get("direction", "outbound")
-            
-            # Extract broker info from cached data
-            broker_name = broker.get('contact_name', 'your broker') if broker else 'your broker'
-            broker_company = broker.get('company_name', '') if broker else ''
-            broker_phone = broker.get('primary_phone_e164', '') if broker else ''
-            available_slots_display = format_slots_for_llm(available_slots, max_display=5) if available_slots else "No slots available"
-            
-            logger.info(f"[BARBARA] ✅ Loaded from cache: lead={lead.get('first_name') if lead else 'None'}, broker={broker_name}")
-            
-            # Sync lead status to conversation_state
-            if lead:
-                lead_qualified = lead.get('qualified', False)
-                lead_verified = lead.get('verified', False)
-                update_conversation_state(phone, {
-                    'qualified': lead_qualified,
-                    'conversation_data': {
-                        'verified': lead_verified,
-                        'call_direction': direction
-                    }
-                })
-                state = get_conversation_state(phone)
-        else:
-            # SLOW PATH: Load from database (inbound calls or fallback)
-            logger.info(f"[BARBARA] Loading from database (no cached session)")
-            
-            # For OUTBOUND calls: use the TO number (lead's phone) and lead_id from URL
-            # For INBOUND calls: use the FROM number (caller's phone)
-            if direction == "outbound":
-                # Outbound: we're calling the lead, so use "to" number
-                caller_num = (
-                    call_data.get("to") or 
-                    call_data.get("to_number") or
-                    request_data.get("called_id_num") or
-                    ""
-                )
-                logger.info(f"[BARBARA] Outbound call to: {caller_num}, lead_id from URL: {lead_id_from_url}")
-            else:
-                # Inbound: caller is calling us, use "from" number
-                caller_num = (
-                    call_data.get("from") or 
-                    call_data.get("from_number") or
-                    request_data.get("caller_id_num") or
-                    ""
-                )
-            
-            phone = normalize_phone(caller_num) if caller_num else "unknown"
-            
-            logger.info(f"[BARBARA] Call direction: {direction}, phone: {caller_num} (normalized: {phone})")
-            
-            # Load lead data from database
-            # For OUTBOUND: try lead_id from URL first, then fall back to phone lookup
-            # For INBOUND: use phone lookup
-            lead = None
-            if lead_id_from_url:
-                lead = get_lead_by_id(lead_id_from_url)
-                if lead:
-                    logger.info(f"[BARBARA] Found lead by ID: {lead.get('first_name')} (from URL param)")
-            
-            if not lead:
-                lead = get_lead_by_phone(phone)
-                if lead:
-                    logger.info(f"[BARBARA] Found lead by phone: {lead.get('first_name')}")
-            
-            state = get_conversation_state(phone)
-            theme_prompt = get_theme_prompt("reverse_mortgage")
-            models = get_active_signalwire_models()
-            
-            # Sync lead status to conversation_state on call start
-            if lead:
-                lead_qualified = lead.get('qualified', False)
-                lead_verified = lead.get('verified', False)
-                update_conversation_state(phone, {
-                    'qualified': lead_qualified,
-                    'conversation_data': {
-                        'verified': lead_verified,
-                        'call_direction': direction
-                    }
-                })
-                state = get_conversation_state(phone)
-                logger.info(f"[BARBARA] Synced lead status: qualified={lead_qualified}, verified={lead_verified}")
-            
-            # Extract broker info
-            broker = lead.get('brokers', {}) if lead else {}
-            broker_name = broker.get('contact_name', 'your broker') if broker else 'your broker'
-            broker_company = broker.get('company_name', '') if broker else ''
-            broker_phone = broker.get('primary_phone_e164', '') if broker else ''  # E.164 for transfers
-            
-            # Fetch broker availability (sync call to Nylas or generate from business hours)
-            # This pre-loads slots so LLM can offer them immediately in BOOK node
-            available_slots = []
-            available_slots_display = "No slots available"
-            if broker:
-                available_slots = fetch_broker_availability(broker, days_ahead=5, max_slots=10)
-                available_slots_display = format_slots_for_llm(available_slots, max_display=5)
-                logger.info(f"[BARBARA] Fetched {len(available_slots)} available slots for broker {broker_name}")
+        logger.info(f"[BARBARA] Call from: {caller_num} (normalized: {phone}, direction: {direction})")
         
         # PRE-ANSWER: Ringback tone for INBOUND only
         # Per SDK 1.0.4: Use add_pre_answer_verb with auto_answer=False
@@ -342,9 +212,43 @@ Rules:
             })
             logger.info("[BARBARA] Added US ringback for inbound call")
         
+        # Load data from database (sync calls per manual Section 3.18.8)
+        lead = get_lead_by_phone(phone)
+        state = get_conversation_state(phone)
+        theme_prompt = get_theme_prompt("reverse_mortgage")
+        models = get_active_signalwire_models()
+        
+        # Sync lead status to conversation_state on call start
+        if lead:
+            lead_qualified = lead.get('qualified', False)
+            lead_verified = lead.get('verified', False)
+            update_conversation_state(phone, {
+                'qualified': lead_qualified,
+                'conversation_data': {
+                    'verified': lead_verified
+                }
+            })
+            state = get_conversation_state(phone)
+            logger.info(f"[BARBARA] Synced lead status: qualified={lead_qualified}, verified={lead_verified}")
+        
         # Per SDK Section 6.16.2: Set global_data for dynamic prompt variables
         # This replaces text-block injection with structured data the AI can reference
         conversation_data = state.get('conversation_data', {}) if state else {}
+        
+        # Extract broker info
+        broker = lead.get('brokers', {}) if lead else {}
+        broker_name = broker.get('contact_name', 'your broker') if broker else 'your broker'
+        broker_company = broker.get('company_name', '') if broker else ''
+        broker_phone = broker.get('primary_phone_e164', '') if broker else ''  # E.164 for transfers
+        
+        # Fetch broker availability (sync call to Nylas or generate from business hours)
+        # This pre-loads slots so LLM can offer them immediately in BOOK node
+        available_slots = []
+        available_slots_display = "No slots available"
+        if broker:
+            available_slots = fetch_broker_availability(broker, days_ahead=5, max_slots=10)
+            available_slots_display = format_slots_for_llm(available_slots, max_display=5)
+            logger.info(f"[BARBARA] Fetched {len(available_slots)} available slots for broker {broker_name}")
         
         self.set_global_data({
             # Caller identity
@@ -1240,12 +1144,44 @@ When booking, offer the next available slot first. If they need a different time
 
 # Entry point
 if __name__ == "__main__":
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+    from starlette.middleware import Middleware
+    from starlette.middleware.cors import CORSMiddleware
+    
     # Create the Barbara agent
     agent = BarbaraAgent()
     
-    logger.info("[BARBARA] Starting agent server")
-    logger.info("[BARBARA]   SWAIG endpoint: /agent/barbara")
-    logger.info("[BARBARA]   Outbound calls: use lead_id and direction=outbound query params")
-    
-    # Run the agent
-    agent.run()
+    # Import REST API routes
+    try:
+        from api.tools import routes as api_routes
+        
+        # Create combined ASGI app
+        # Agent handles /agent/* (SWAIG), API handles /api/* (REST)
+        middleware = [
+            Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+        ]
+        
+        combined_app = Starlette(
+            routes=[
+                Mount("/agent", app=agent),  # SWAIG endpoints
+                *api_routes,  # REST API endpoints (/api/*)
+            ],
+            middleware=middleware
+        )
+        
+        logger.info("[BARBARA] Starting combined server (SWAIG + REST API)")
+        logger.info("[BARBARA]   SWAIG: /agent/barbara")
+        logger.info("[BARBARA]   REST:  /api/tools/*")
+        
+        port = int(os.getenv("PORT", 3000))
+        host = os.getenv("HOST", "0.0.0.0")
+        
+        uvicorn.run(combined_app, host=host, port=port)
+        
+    except ImportError as e:
+        # Fallback: run agent only (no REST API)
+        logger.warning(f"[BARBARA] REST API not available: {e}")
+        logger.info("[BARBARA] Starting agent-only server")
+        agent.run()
