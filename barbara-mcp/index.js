@@ -769,25 +769,25 @@ async function executeTool(name, args) {
         
         app.log.info({ agent_url: agentUrl.toString() }, '🔗 Barbara agent URL');
         
-        // Use SignalWire REST API (LaML) - more universally available
-        const apiUrl = `${SIGNALWIRE_SPACE_URL}/api/laml/2010-04-01/Accounts/${SIGNALWIRE_PROJECT_ID}/Calls.json`;
+        // Use SignalWire SWML Calling API (Barbara returns SWML JSON, not LaML/TwiML)
+        const apiUrl = `${SIGNALWIRE_SPACE_URL}/api/calling/calls`;
         
-        // REST API uses form-encoded data
-        const formData = new URLSearchParams();
-        formData.append('From', fromPhone);
-        formData.append('To', toPhone);
-        formData.append('Url', agentUrl.toString());
-        formData.append('Timeout', '60');
+        const requestBody = {
+          url: agentUrl.toString(),
+          from: fromPhone,
+          to: toPhone,
+          timeout: 60
+        };
         
-        app.log.info({ api_url: apiUrl, from: fromPhone, to: toPhone }, '📤 Calling SignalWire REST API');
+        app.log.info({ api_url: apiUrl, from: fromPhone, to: toPhone }, '📤 Calling SignalWire SWML API');
         
         const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
+            'Content-Type': 'application/json',
             'Authorization': getSignalWireAuthHeader()
           },
-          body: formData.toString()
+          body: JSON.stringify(requestBody)
         });
         
         const responseText = await response.text();
