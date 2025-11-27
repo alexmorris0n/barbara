@@ -420,7 +420,20 @@ When booking, offer the next available slot first. If they need a different time
         # Configure voice
         # Per Section 3.20 (Voice & Language)
         voice_string = models.get("tts_voice_string", "elevenlabs.rachel")
-        self.add_language("English", "en-US", voice_string)
+        
+        # Per Section 3.20.3: function_fillers are spoken while tools execute
+        # CRITICAL: Must be passed to add_language(), not just in @tool decorators
+        self.add_language(
+            name="English",
+            code="en-US",
+            voice=voice_string,
+            function_fillers=[
+                "One moment please...",
+                "Let me check on that...",
+                "Bear with me...",
+                "Just a moment..."
+            ]
+        )
         
         # NOTE: Contexts are built in __init__ (per Section 6.8), NOT here.
         # on_swml_request is for dynamic prompts and params only.

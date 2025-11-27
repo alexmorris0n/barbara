@@ -11,19 +11,28 @@ Improve appointment booking success rate by implementing unused SignalWire AI Ag
 
 ## 🔴 HIGH PRIORITY - Implement First
 
-### 1. [x] Function Fillers ✅ COMPLETED
+### 1. [x] Function Fillers ✅ COMPLETED (FIXED 2024-11-27)
 **Impact:** Eliminates dead silence during tool execution - critical for seniors  
 **Effort:** Low  
-**Section:** 4.13
+**Section:** 3.20.3 (Filler Phrases), 4.13 (Function Fillers)
 
 ~~Currently NO fillers on any tools. When `calculate_reverse_mortgage` or `check_broker_availability` runs, there's silence.~~
 
-**Added fillers to:**
+**ROOT CAUSE FIXED:** Per-tool `fillers={}` in `@tool` decorators were present but NOT WORKING because `add_language()` was missing `function_fillers` parameter. Per SDK Section 3.20.3, **`function_fillers` MUST be passed to `add_language()`** - this enables the feature.
+
+**Implementation:**
+- [x] Added `function_fillers` to `add_language()` call in `on_swml_request` (line 427)
+- [x] Per-tool fillers still defined in decorators (may override defaults)
+
+**Per-tool fillers defined for:**
 - [x] `calculate_reverse_mortgage` - "Let me run those numbers for you...", "Calculating what you might qualify for...", "One moment while I crunch the numbers..."
 - [x] `check_broker_availability` - "Let me check the calendar...", "Looking at available times...", "One moment while I check availability..."
 - [x] `book_appointment` - "Let me schedule that for you...", "Booking your appointment now...", "One moment while I get that set up..."
 - [x] `search_knowledge` - "Let me look that up for you...", "Good question, let me find that information...", "One moment while I check on that..."
 - [x] `verify_caller_identity` - "Let me verify that...", "One moment while I look you up...", "Let me pull up your information..."
+
+**Language-level fillers (fallback for all tools):**
+- "One moment please...", "Let me check on that...", "Bear with me...", "Just a moment..."
 
 ---
 
