@@ -770,25 +770,38 @@ async function executeTool(name, args) {
         
         app.log.info({ agent_url: agentUrl.toString() }, '🔗 Barbara agent URL');
         
-        // Use SignalWire SWML Calling API (Barbara returns SWML JSON, not LaML/TwiML)
+        // Use SignalWire Calling API (SWML-native) - sends JSON to SWML endpoints
+        // POST /api/calling/calls
         const apiUrl = `${SIGNALWIRE_SPACE_URL}/api/calling/calls`;
         
-        const requestBody = {
-          url: agentUrl.toString(),
-          from: fromPhone,
-          to: toPhone,
-          timeout: 60
+        // Build JSON payload for Calling API (SWML-native)
+        const callPayload = {
+          command: 'dial',
+          params: {
+            url: agentUrl.toString(),  // SWML endpoint URL
+            from: fromPhone,
+            to: toPhone,
+            caller_id: fromPhone,
+            timeout: 60,
+            max_duration: 3600
+          }
         };
         
-        app.log.info({ api_url: apiUrl, from: fromPhone, to: toPhone }, '📤 Calling SignalWire SWML API');
+        app.log.info({ 
+          api_url: apiUrl,
+          to: callPayload.params.to,
+          from: callPayload.params.from,
+          url: callPayload.params.url
+        }, '📤 Calling SignalWire SWML API');
         
         const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'Accept': 'application/json',
             'Authorization': getSignalWireAuthHeader()
           },
-          body: JSON.stringify(requestBody)
+          body: JSON.stringify(callPayload)
         });
         
         const responseText = await response.text();
