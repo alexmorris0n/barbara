@@ -244,22 +244,20 @@ Only using "math" skill.
 
 ---
 
-### O2. [ ] Pre-warm Data Before Call
+### O2. [x] Pre-warm Data Before Call ❌ NOT VIABLE
 **Impact:** Faster SWML response = less delay before Barbara speaks  
 **Effort:** Medium  
 **Section:** 3.18.8
 
-**Status:** NOT IMPLEMENTED - no caching exists
+**Status:** NOT RECOMMENDED - breaks Vue edits
 
-Currently: MCP triggers call → SignalWire requests SWML → Agent loads data → SWML returned (slow)  
-Better: MCP pre-loads data → caches it → triggers call → instant SWML response
+**Problem:** If you change lead/broker data in Vue after cache, call uses stale data.
 
-**Implementation:**
-- [ ] Add session cache in agent (TTL 5 min)
-- [ ] MCP calls `/api/prewarm` with lead_id first
-- [ ] Agent loads all data, returns session_id
-- [ ] MCP triggers call with session_id in URL
-- [ ] `on_swml_request` checks cache first, skips DB if cached
+**Alternative considered:**
+- Cache only static data (prompts, models) - but these are fast anyway
+- Short TTL - defeats purpose if call takes time to connect
+
+**Decision:** Accept current latency (~1-2s for DB queries). Fresh data > speed.
 
 ---
 
