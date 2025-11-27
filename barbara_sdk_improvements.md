@@ -226,6 +226,71 @@ Only using "math" skill.
 
 ---
 
+## 🟠 OUTBOUND CALL IMPROVEMENTS - After Core Fix
+
+### O1. [ ] Different Greeting for Outbound
+**Impact:** Outbound shouldn't use "Hello, this is Barbara" - should ask for the lead by name  
+**Effort:** Low
+
+**Implementation:**
+- [ ] Pass `call_direction: "outbound"` in global_data ✅ (already done)
+- [ ] Update greet node to check `${global_data.call_direction}`
+- [ ] Outbound: "Hello, may I speak with ${global_data.caller_name}?"
+- [ ] Inbound: "Hello, this is Barbara from Equity Connect..."
+
+---
+
+### O2. [ ] Pre-warm Data Before Call
+**Impact:** Faster SWML response = less delay before Barbara speaks  
+**Effort:** Medium  
+**Section:** 3.18.8
+
+Currently: MCP triggers call → SignalWire requests SWML → Agent loads data → SWML returned (slow)  
+Better: MCP pre-loads data → caches it → triggers call → instant SWML response
+
+**Implementation:**
+- [ ] Add session cache in agent (TTL 5 min)
+- [ ] MCP calls `/api/prewarm` with lead_id first
+- [ ] Agent loads all data, returns session_id
+- [ ] MCP triggers call with session_id in URL
+- [ ] `on_swml_request` checks cache first, skips DB if cached
+
+---
+
+### O3. [ ] Outbound-Specific Timing
+**Impact:** Don't rush seniors who just answered their phone  
+**Effort:** Low
+
+**Implementation:**
+- [ ] `wait_for_user: True` for outbound (wait for them to say hello)
+- [ ] Longer `end_of_speech_timeout` for outbound (they may be confused)
+- [ ] Set in `on_swml_request` based on direction
+
+---
+
+### O4. [ ] AMD (Answering Machine Detection) Handling
+**Impact:** Don't waste time talking to voicemail  
+**Effort:** Medium
+
+**Implementation:**
+- [ ] Check `AnsweredBy` in request_data
+- [ ] If `machine_start` or `machine_end_beep`: leave voicemail message
+- [ ] Use `add_post_answer_verb("play", {"url": "voicemail_message.mp3"})`
+- [ ] Then hangup
+
+---
+
+### O5. [ ] Outbound Caller ID
+**Impact:** Lead sees broker's local number, more likely to answer  
+**Effort:** Low (already partially done)
+
+**Implementation:**
+- [x] MCP looks up broker's SignalWire number
+- [x] Passes as `from` in dial command
+- [ ] Verify E.164 format consistency
+
+---
+
 ## 🟢 NICE TO HAVE - Future Improvements
 
 ### 12. [ ] Toggle Functions Based on State
