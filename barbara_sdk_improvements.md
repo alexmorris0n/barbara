@@ -228,17 +228,19 @@ Only using "math" skill.
 
 ## 🟠 OUTBOUND CALL IMPROVEMENTS - After Core Fix
 
-### O1. [~] Different Greeting for Outbound (PARTIAL)
+### O1. [x] Different Greeting for Outbound ✅ DONE
 **Impact:** Outbound shouldn't use "Hello, this is Barbara" - should ask for the lead by name  
 **Effort:** Low
 
-**Status:** `call_direction` IS in global_data (line 343), but greet node needs update.
+**Status:** FULLY IMPLEMENTED - greet prompt already has direction-based logic
 
 **Implementation:**
 - [x] Pass `call_direction: "outbound"` in global_data (barbara_agent.py:343)
-- [ ] Update greet node in Supabase to check `${global_data.call_direction}`
-- [ ] Outbound: "Hello, may I speak with ${global_data.caller_name}?"
-- [ ] Inbound: "Hello, this is Barbara from Equity Connect..."
+- [x] Greet node checks `${global_data.call_direction}` 
+- [x] Outbound: "Hello, may I speak with ${global_data.caller_name}?"
+- [x] Inbound: "Hello, this is Barbara from Equity Connect..."
+
+**Note:** Was showing wrong name ("there") because lead lookup was broken. Fixed in commit 7e8f158.
 
 ---
 
