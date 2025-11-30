@@ -1198,44 +1198,5 @@ When booking, offer the next available slot first. If they need a different time
 
 # Entry point
 if __name__ == "__main__":
-    import uvicorn
-    from starlette.applications import Starlette
-    from starlette.routing import Mount
-    from starlette.middleware import Middleware
-    from starlette.middleware.cors import CORSMiddleware
-    
-    # Create the Barbara agent
     agent = BarbaraAgent()
-    
-    # Import REST API routes
-    try:
-        from api.tools import routes as api_routes
-        
-        # Create combined ASGI app
-        # Agent handles /agent/* (SWAIG), API handles /api/* (REST)
-        middleware = [
-            Middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
-        ]
-        
-        combined_app = Starlette(
-            routes=[
-                Mount("/agent", app=agent),  # SWAIG endpoints
-                *api_routes,  # REST API endpoints (/api/*)
-            ],
-            middleware=middleware
-        )
-        
-        logger.info("[BARBARA] Starting combined server (SWAIG + REST API)")
-        logger.info("[BARBARA]   SWAIG: /agent/barbara")
-        logger.info("[BARBARA]   REST:  /api/tools/*")
-        
-        port = int(os.getenv("PORT", 3000))
-        host = os.getenv("HOST", "0.0.0.0")
-        
-        uvicorn.run(combined_app, host=host, port=port)
-        
-    except ImportError as e:
-        # Fallback: run agent only (no REST API)
-        logger.warning(f"[BARBARA] REST API not available: {e}")
-        logger.info("[BARBARA] Starting agent-only server")
-        agent.run()
+    agent.run()

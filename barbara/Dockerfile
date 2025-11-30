@@ -6,13 +6,8 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code - explicitly copy all necessary files
-COPY barbara_agent.py .
-COPY services/ ./services/
-COPY tools/ ./tools/
-
-# Set PYTHONPATH to ensure imports work
-ENV PYTHONPATH=/app
+# Copy application code
+COPY . .
 
 # Expose port
 EXPOSE 3000

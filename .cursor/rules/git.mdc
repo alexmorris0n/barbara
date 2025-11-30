@@ -1,0 +1,4 @@
+---
+The project is deployed on fly.io.  please only push to git unless i tel you to deploy using the fly cli
+alwaysApply: true
+---

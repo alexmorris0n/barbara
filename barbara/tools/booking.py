@@ -46,6 +46,15 @@ def _trigger_manual_booking_webhook(
         logger.warning("[WEBHOOK] N8N_MANUAL_BOOKING_WEBHOOK not configured or httpx not available")
         return
     
+    # Build notes with requested time included
+    notes_with_time = notes or ""
+    if requested_time:
+        time_note = f"Requested booking time: {requested_time}"
+        if notes_with_time:
+            notes_with_time = f"{notes_with_time} | {time_note}"
+        else:
+            notes_with_time = time_note
+    
     try:
         # Use sync client
         with httpx.Client(timeout=10.0) as client:
@@ -58,7 +67,7 @@ def _trigger_manual_booking_webhook(
                     "error": error,
                     "error_type": type(error).__name__ if error else "Unknown",
                     "requested_time": requested_time,
-                    "notes": notes,
+                    "notes": notes_with_time,
                     "timestamp": datetime.utcnow().isoformat(),
                     "source": "signalwire_agent"
                 }
@@ -299,19 +308,44 @@ def handle_check_broker_availability(phone: str, preferred_date: str = None, pre
     """
     phone = normalize_phone(phone)
     
+    # Build requested time string for webhook notes
+    requested_time_str = None
+    if preferred_date or preferred_time:
+        parts = [p for p in [preferred_date, preferred_time] if p]
+        requested_time_str = " ".join(parts) if parts else None
+    
     # Get lead to find assigned broker (sync)
     lead = get_lead_by_phone(phone)
     if not lead:
+        # Trigger webhook - can't find lead
+        _trigger_manual_booking_webhook(
+            phone=phone,
+            error="Lead not found during availability check",
+            requested_time=requested_time_str,
+            notes="Availability lookup failed - lead not found in database"
+        )
         return SwaigFunctionResult(
             "I couldn't find your information. Let me connect you with our team."
         )
     
+    lead_id = lead.get('id')
+    
     # Get broker info
     broker = lead.get('brokers')
     if not broker:
+        # Trigger webhook - no broker assigned
+        _trigger_manual_booking_webhook(
+            lead_id=lead_id,
+            phone=phone,
+            error="No broker assigned during availability check",
+            requested_time=requested_time_str,
+            notes="Availability lookup failed - no broker assigned to lead"
+        )
         return SwaigFunctionResult(
             "I'll need to assign you a broker first. Let me connect you with our team."
         )
+    
+    broker_id = broker.get('id')
     
     broker_name = broker.get('contact_name', 'your broker')
     
@@ -323,6 +357,15 @@ def handle_check_broker_availability(phone: str, preferred_date: str = None, pre
         slots = fetch_broker_availability(broker, days_ahead=7, max_slots=20)  # Get more slots for filtering
         
         if not slots:
+            # Trigger webhook - availability fetch returned no slots
+            _trigger_manual_booking_webhook(
+                lead_id=lead_id,
+                broker_id=broker_id,
+                phone=phone,
+                error="Nylas availability returned no slots",
+                requested_time=requested_time_str,
+                notes="Availability lookup failed - calendar returned no available slots"
+            )
             return SwaigFunctionResult(
                 f"I'm having trouble checking {broker_name}'s calendar right now. "
                 f"Let me have someone call you to schedule. Is this the best number to reach you?"
@@ -375,6 +418,17 @@ def handle_check_broker_availability(phone: str, preferred_date: str = None, pre
             
     except Exception as e:
         logger.error(f"[BOOKING] Error checking availability: {e}")
+        
+        # Trigger webhook - exception during availability check
+        _trigger_manual_booking_webhook(
+            lead_id=lead_id,
+            broker_id=broker_id,
+            phone=phone,
+            error=f"Availability check exception: {str(e)}",
+            requested_time=requested_time_str,
+            notes="Availability lookup failed - exception during calendar check"
+        )
+        
         return SwaigFunctionResult(
             f"{broker_name} is generally available during business hours. "
             f"What day and time would work best for you?"
