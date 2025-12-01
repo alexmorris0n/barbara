@@ -1,0 +1,20 @@
+{
+  "name": "barbara-cli-testing",
+  "version": "1.0.0",
+  "description": "CLI testing service for Barbara agent - tests prompts and triggers calls",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "fastify": "^4.28.1",
+    "@fastify/cors": "^9.0.1",
+    "dotenv": "^16.4.5",
+    "pino-pretty": "^11.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+
