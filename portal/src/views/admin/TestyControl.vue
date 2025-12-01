@@ -11,6 +11,10 @@
           </div>
         </div>
         <div class="header-actions">
+          <button @click="showTestCallModal = true" class="btn-webrtc">
+            <n-icon size="18"><HeadsetOutline /></n-icon>
+            <span>Browser Call</span>
+          </button>
           <button @click="triggerOutboundCall" class="btn-call" :disabled="loading || callingTesty || !state?.lead_id">
             <n-icon size="18"><CallOutline /></n-icon>
             <span v-if="!callingTesty">Call Testy</span>
@@ -302,12 +306,22 @@
         {{ message }}
       </div>
     </transition>
+
+    <!-- WebRTC Test Call Modal -->
+    <TestCallModal
+      :show="showTestCallModal"
+      mode="full"
+      start-node="greet"
+      vertical="reverse_mortgage"
+      @close="showTestCallModal = false"
+    />
   </div>
 </template>
 
 <script>
 import { supabase } from '@/lib/supabase'
 import { NIcon } from 'naive-ui'
+import TestCallModal from '@/components/TestCallModal.vue'
 import {
   FlaskOutline,
   CallOutline,
@@ -332,7 +346,8 @@ import {
   AddCircleOutline,
   HelpCircleOutline,
   ArrowBackCircleOutline,
-  PersonRemoveOutline
+  PersonRemoveOutline,
+  HeadsetOutline
 } from '@vicons/ionicons5'
 
 // Testy phone numbers - E.164 for leads table, 10-digit for conversation_state
@@ -343,6 +358,7 @@ export default {
   name: 'TestyControl',
   components: {
     NIcon,
+    TestCallModal,
     FlaskOutline,
     CallOutline,
     RefreshOutline,
@@ -366,7 +382,8 @@ export default {
     AddCircleOutline,
     HelpCircleOutline,
     ArrowBackCircleOutline,
-    PersonRemoveOutline
+    PersonRemoveOutline,
+    HeadsetOutline
   },
   data() {
     return {
@@ -375,7 +392,8 @@ export default {
       callingTesty: false,
       message: '',
       messageType: 'success',
-      supabase
+      supabase,
+      showTestCallModal: false
     }
   },
   computed: {
@@ -1347,6 +1365,16 @@ button:disabled {
 .btn-call:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+.btn-webrtc {
+  background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+  color: white;
+}
+
+.btn-webrtc:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
 }
 
 .btn-secondary {
