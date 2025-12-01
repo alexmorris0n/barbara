@@ -21,6 +21,10 @@ const SIGNALWIRE_API_TOKEN = process.env.SIGNALWIRE_API_TOKEN;
 const SIGNALWIRE_PHONE_NUMBER = process.env.SIGNALWIRE_PHONE_NUMBER;
 const SWAIG_AGENT_URL = process.env.SWAIG_AGENT_URL || 'https://barbara-agent.fly.dev/agent/barbara';
 
+// SignalWire Fabric WebRTC config (for browser-based test calls)
+const SIGNALWIRE_ALLOWED_ADDRESSES = process.env.SIGNALWIRE_ALLOWED_ADDRESSES || '';
+const SIGNALWIRE_GUEST_TOKEN_PATH = process.env.SIGNALWIRE_GUEST_TOKEN_PATH || '/api/fabric/guests/tokens';
+
 // Initialize Fastify
 const app = Fastify({
   logger: {
@@ -74,8 +78,89 @@ app.get('/healthz', async (request, reply) => {
   return reply.code(200).send({
     status: 'ok',
     service: 'barbara-cli-testing',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    webrtc_enabled: Boolean(SIGNALWIRE_ALLOWED_ADDRESSES)
   });
+});
+
+/**
+ * SignalWire Fabric Guest Token API
+ * Generate a short-lived token for browser-based WebRTC test calls
+ * POST /api/test-call/token
+ * 
+ * Returns: { token, expires_at }
+ */
+app.post('/api/test-call/token', async (request, reply) => {
+  // Check SignalWire credentials
+  if (!SIGNALWIRE_PROJECT_ID || !SIGNALWIRE_API_TOKEN || !SIGNALWIRE_SPACE_URL) {
+    return reply.code(500).send({
+      error: 'SignalWire credentials not configured'
+    });
+  }
+
+  const parsedAllowedAddresses = SIGNALWIRE_ALLOWED_ADDRESSES
+    .split(',')
+    .map(addr => addr.trim())
+    .filter(Boolean);
+
+  if (!parsedAllowedAddresses.length) {
+    return reply.code(500).send({
+      error: 'SIGNALWIRE_ALLOWED_ADDRESSES not configured. Set to comma-separated SIP addresses (e.g., "sip:barbara@example.sip.signalwire.com")'
+    });
+  }
+
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
+  const payload = {
+    allowed_addresses: parsedAllowedAddresses,
+    ttl: 3600,
+    expires_at: expiresAt,
+    state: {
+      type: 'barbara-web-test'
+    }
+  };
+
+  try {
+    const auth = Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64');
+    const tokenUrl = new URL(SIGNALWIRE_GUEST_TOKEN_PATH, SIGNALWIRE_SPACE_URL).toString();
+
+    app.log.info({ tokenUrl }, '[test-call/token] Requesting guest token from SignalWire Fabric');
+
+    const response = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Basic ${auth}`
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      app.log.error({ status: response.status, data }, '[test-call/token] Failed to generate guest token');
+      return reply.code(500).send({
+        error: data.message || 'Failed to generate guest token'
+      });
+    }
+
+    const token = data.token || data.jwt_token || data.jwt || data.access_token;
+
+    if (!token) {
+      app.log.error({ data }, '[test-call/token] Response missing token property');
+      return reply.code(500).send({
+        error: 'Guest token response missing token'
+      });
+    }
+
+    app.log.info('[test-call/token] ✅ Guest token generated for browser WebRTC');
+    return reply.send({ token, expires_at: expiresAt });
+
+  } catch (err) {
+    app.log.error({ err }, '[test-call/token] Error generating guest token');
+    return reply.code(500).send({
+      error: 'Failed to generate guest token: ' + err.message
+    });
+  }
 });
 
 /**
@@ -297,11 +382,13 @@ async function start() {
       host: '0.0.0.0' 
     });
     
-    console.log('\n Barbara CLI Testing Service Started');
+    console.log('\n🧪 Barbara CLI Testing Service Started');
     console.log(`   Environment: ${NODE_ENV}`);
     console.log(`   Health: http://localhost:${PORT}/healthz`);
-    console.log(`   Test API: POST http://localhost:${PORT}/api/test-cli`);
-    console.log(`   Trigger Call: POST http://localhost:${PORT}/trigger-call\n`);
+    console.log(`   Test CLI: POST http://localhost:${PORT}/api/test-cli`);
+    console.log(`   WebRTC Token: POST http://localhost:${PORT}/api/test-call/token`);
+    console.log(`   Trigger Call: POST http://localhost:${PORT}/trigger-call`);
+    console.log(`   WebRTC: ${SIGNALWIRE_ALLOWED_ADDRESSES ? '✅ Configured' : '⚠️ SIGNALWIRE_ALLOWED_ADDRESSES not set'}\n`);
     
   } catch (err) {
     app.log.error(err);

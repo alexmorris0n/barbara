@@ -10,7 +10,7 @@ export interface PhoneNumber {
   phone_number: string
   signalwire_sid: string
   label: string | null
-  current_route: 'signalwire' | 'livekit'
+  current_route: 'signalwire' | 'swml'
   vertical: string | null
   is_active: boolean
   last_synced_at: string | null
@@ -19,9 +19,8 @@ export interface PhoneNumber {
 }
 
 export interface RoutingConfig {
-  livekit_swml_script_id: string
+  swml_script_id: string
   signalwire_webhook_url: string
-  signalwire_swml_script_id?: string
 }
 
 /**
@@ -31,7 +30,7 @@ export async function getRoutingConfig(): Promise<RoutingConfig> {
   const { data, error } = await supabase
     .from('phone_routing_config')
     .select('key, value')
-    .in('key', ['livekit_swml_script_id', 'signalwire_webhook_url', 'signalwire_swml_script_id'])
+    .in('key', ['swml_script_id', 'signalwire_webhook_url'])
 
   if (error) {
     console.error('Error fetching routing config:', error)
@@ -72,7 +71,7 @@ export async function listPhoneNumbers(): Promise<PhoneNumber[]> {
  */
 export async function updatePhoneRouting(
   phoneNumberId: string,
-  newRoute: 'signalwire' | 'livekit'
+  newRoute: 'signalwire' | 'swml'
 ): Promise<{ success: boolean; message: string }> {
   try {
     // Step 1: Get current phone number config
@@ -106,8 +105,7 @@ export async function updatePhoneRouting(
           phone_number: phoneNumber.phone_number,
           route_type: newRoute,
           webhook_url: config.signalwire_webhook_url,
-          swml_script_id: config.livekit_swml_script_id,
-          signalwire_swml_script_id: config.signalwire_swml_script_id
+          swml_script_id: config.swml_script_id
         }
       }
     )
@@ -131,7 +129,7 @@ export async function updatePhoneRouting(
 
     return {
       success: true,
-      message: `Routing updated to ${newRoute === 'livekit' ? 'LiveKit (SWML Script)' : 'SignalWire (Webhook)'}`
+      message: `Routing updated to ${newRoute === 'swml' ? 'SWML Script' : 'SignalWire (Webhook)'}`
     }
   } catch (error) {
     console.error('Error updating phone routing:', error)

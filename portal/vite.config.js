@@ -15,7 +15,12 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      // Proxy API requests to FastAPI server
+      // Proxy test-call requests to local cli-testing server
+      '/api/test-call': {
+        target: 'http://localhost:8080',
+        changeOrigin: true
+      },
+      // Proxy other API requests to FastAPI server
       '/api': {
         target: 'https://equity-agent-api.fly.dev',
         changeOrigin: true,
