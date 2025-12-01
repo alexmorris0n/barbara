@@ -463,6 +463,10 @@ When booking, offer the next available slot first. If they need a different time
         logger.info(f"[BARBARA]   LLM: {models.get('llm_model')}")
         logger.info(f"[BARBARA]   STT: {models.get('stt_model')}")
         logger.info(f"[BARBARA]   TTS: {voice_string}")
+        
+        # CRITICAL: Call parent implementation to generate SWML
+        # Per Holy Guacamole pattern - parent generates the actual SWML response
+        return super().on_swml_request(request_data, callback_path, request)
     
     def on_summary(self, summary: Optional[Dict[str, Any]], raw_data: Optional[Dict[str, Any]] = None) -> None:
         """
