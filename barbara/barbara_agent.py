@@ -174,8 +174,7 @@ Rules:
         
         logger.info("[BARBARA] Agent initialized with %d contexts", len(ALL_NODES))
     
-    def on_swml_request(self, request_data: dict, callback_path: str = None, request = None, *args, **kwargs) -> None:
-        # NOTE: SDK passes 4 args but manual documents 2. Using *args, **kwargs as workaround.
+    def on_swml_request(self, request_data=None, callback_path=None, request=None):
         """
         Per Section 3.18.3 (The on_swml_request Method):
         Called before SWML is generated for each request.
@@ -190,9 +189,14 @@ Rules:
         - called_id_num: Number that was called
         - direction: "inbound" or "outbound"
         """
+        logger.info(f"[BARBARA] on_swml_request called with request_data: {request_data}")
+        
+        # Ensure request_data is a dict
+        request_data = request_data or {}
+        
         # Extract call data from SignalWire request
         call_data = request_data.get("call", {})
-        
+            
         # WebRTC calls use "device" instead of "call"
         device_data = request_data.get("device", {})
         device_params = device_data.get("params", {})
@@ -463,10 +467,6 @@ When booking, offer the next available slot first. If they need a different time
         logger.info(f"[BARBARA]   LLM: {models.get('llm_model')}")
         logger.info(f"[BARBARA]   STT: {models.get('stt_model')}")
         logger.info(f"[BARBARA]   TTS: {voice_string}")
-        
-        # CRITICAL: Call parent implementation to generate SWML
-        # Per Holy Guacamole pattern - parent generates the actual SWML response
-        return super().on_swml_request(request_data, callback_path, request)
     
     def on_summary(self, summary: Optional[Dict[str, Any]], raw_data: Optional[Dict[str, Any]] = None) -> None:
         """
