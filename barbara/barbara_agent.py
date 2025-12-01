@@ -31,6 +31,7 @@ from services.database import (
     get_active_signalwire_models,
     normalize_phone,
     insert_call_summary,
+    insert_call_debug_log,
 )
 # build_context_injection replaced by set_global_data per SDK Section 6.16
 from services.fallbacks import get_fallback_node_config
@@ -415,6 +416,7 @@ When booking, offer the next available slot first. If they need a different time
             "conversation_id": phone,
             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
             "local_tz": "America/Los_Angeles",
+            "debug_webhook_url": "https://barbara-agent.fly.dev/debug-log",  # Capture transcripts & tool calls
         })
         
         # Configure voice
@@ -1199,4 +1201,45 @@ When booking, offer the next available slot first. If they need a different time
 # Entry point
 if __name__ == "__main__":
     agent = BarbaraAgent()
+    
+    # Add debug webhook endpoint
+    app = agent.get_app()
+    
+    @app.post("/debug-log")
+    async def debug_webhook(request):
+        """
+        Receives debug events from SignalWire (transcripts, tool calls, context switches).
+        Stores in call_debug_logs table for Vue portal to display.
+        """
+        try:
+            data = await request.json()
+            
+            # Extract key fields
+            call_id = data.get("call_id", "unknown")
+            event_type = data.get("event_type", "unknown")
+            
+            # Try to get lead_id from phone number if available
+            lead_id = None
+            if "caller_id_num" in data or "from" in data.get("call", {}):
+                caller_num = data.get("caller_id_num") or data.get("call", {}).get("from", "")
+                if caller_num:
+                    lead = get_lead_by_phone(caller_num)
+                    if lead:
+                        lead_id = lead.get("id")
+            
+            # Store in database
+            insert_call_debug_log(
+                call_id=call_id,
+                event_type=event_type,
+                event_data=data,
+                lead_id=lead_id
+            )
+            
+            logger.info(f"[DEBUG] Logged {event_type} event for call {call_id}")
+            return {"status": "ok"}
+            
+        except Exception as e:
+            logger.error(f"[DEBUG] Error processing debug webhook: {e}", exc_info=True)
+            return {"status": "error", "message": str(e)}
+    
     agent.run()
