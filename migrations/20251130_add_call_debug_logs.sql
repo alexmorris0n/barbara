@@ -24,3 +24,4 @@ CREATE INDEX IF NOT EXISTS idx_call_debug_logs_event_type ON call_debug_logs(eve
 -- Comment on table
 COMMENT ON TABLE call_debug_logs IS 'Stores debug webhook data from SignalWire including transcripts and tool calls';
 
+

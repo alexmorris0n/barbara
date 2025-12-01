@@ -8,3 +8,4 @@ DROP INDEX IF EXISTS idx_call_debug_logs_event_type;
 -- Drop table
 DROP TABLE IF EXISTS call_debug_logs;
 
+
