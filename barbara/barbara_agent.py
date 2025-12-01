@@ -229,7 +229,14 @@ Rules:
                 ""
             )
         
-        phone = normalize_phone(caller_num) if caller_num else "unknown"
+        # Detect WebRTC/Guest callers (SIP URIs from browser)
+        is_webrtc_guest = caller_num.startswith("sip:guest-") or ";context=guest" in caller_num
+        if is_webrtc_guest:
+            logger.info(f"[BARBARA] WebRTC guest call detected: {caller_num}")
+            # For WebRTC test calls, use a test phone number
+            phone = "0000000000"  # Test phone for WebRTC guests
+        else:
+            phone = normalize_phone(caller_num) if caller_num else "unknown"
         
         logger.info(f"[BARBARA] Call direction: {direction}, phone: {caller_num} (normalized: {phone})")
         
