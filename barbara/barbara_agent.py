@@ -192,6 +192,12 @@ Rules:
         """
         # Extract call data from SignalWire request
         call_data = request_data.get("call", {})
+        
+        # WebRTC calls use "device" instead of "call"
+        device_data = request_data.get("device", {})
+        device_params = device_data.get("params", {})
+        is_webrtc = device_data.get("type") == "webrtc"
+        
         direction = call_data.get("direction") or request_data.get("direction", "inbound")
         
         # Get query params from URL (for outbound calls with lead_id)
@@ -222,17 +228,19 @@ Rules:
             logger.info(f"[BARBARA] Outbound call to: {caller_num}, lead_id from URL: {lead_id_from_url}")
         else:
             # Inbound: caller is calling us, use "from" number
+            # WebRTC calls have caller in device.params.from
             caller_num = (
+                device_params.get("from") or  # WebRTC calls
                 call_data.get("from") or 
                 call_data.get("from_number") or
                 request_data.get("caller_id_num") or
                 ""
             )
         
-        # Detect WebRTC/Guest callers (SIP URIs from browser)
-        is_webrtc_guest = caller_num.startswith("sip:guest-") or ";context=guest" in caller_num
+        # Detect WebRTC/Guest callers (SIP URIs from browser or device.type == webrtc)
+        is_webrtc_guest = is_webrtc or caller_num.startswith("sip:guest-") or ";context=guest" in caller_num
         if is_webrtc_guest:
-            logger.info(f"[BARBARA] WebRTC guest call detected: {caller_num}")
+            logger.info(f"[BARBARA] WebRTC guest call detected (device_type={device_data.get('type')}, from={caller_num})")
             # For WebRTC test calls, use a test phone number
             phone = "0000000000"  # Test phone for WebRTC guests
         else:
