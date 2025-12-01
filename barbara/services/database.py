@@ -550,3 +550,51 @@ def insert_call_summary(
     except Exception as e:
         logger.error(f"[DB] ❌ Error inserting call summary: {e}")
         return False
+
+
+def insert_call_debug_log(
+    call_id: str,
+    event_type: Optional[str],
+    event_data: Dict[str, Any],
+    lead_id: Optional[str] = None
+) -> bool:
+    """
+    Insert debug webhook data into call_debug_logs table.
+    Called from /debug-log endpoint when SignalWire sends debug events.
+    
+    Per SDK line 23689: debug_webhook_url receives debug data including
+    transcripts, tool calls, and other conversation events.
+    
+    Args:
+        call_id: The SignalWire call ID
+        event_type: Type of event (e.g., 'speech', 'tool_call', 'context_switch')
+        event_data: Full JSON payload from the debug webhook
+        lead_id: Optional lead UUID if we can match from call data
+    """
+    if not supabase:
+        logger.warning("[DB] Cannot insert debug log - no Supabase connection")
+        return False
+    
+    try:
+        log_data = {
+            "call_id": call_id,
+            "event_type": event_type,
+            "event_data": event_data,
+        }
+        
+        # Add lead_id if provided
+        if lead_id:
+            log_data["lead_id"] = lead_id
+        
+        response = supabase.table("call_debug_logs").insert(log_data).execute()
+        
+        if response.data:
+            logger.info(f"[DB] ✅ Inserted debug log for call_id: {call_id}, type: {event_type}")
+            return True
+        
+        logger.warning(f"[DB] ⚠️ No data returned when inserting debug log")
+        return False
+        
+    except Exception as e:
+        logger.error(f"[DB] ❌ Error inserting debug log: {e}")
+        return False

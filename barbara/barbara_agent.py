@@ -17,6 +17,7 @@ from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 load_dotenv()  # Load .env file
 
+from fastapi import Request
 from signalwire_agents import AgentBase
 from signalwire_agents.core.function_result import SwaigFunctionResult
 
@@ -31,6 +32,7 @@ from services.database import (
     get_active_signalwire_models,
     normalize_phone,
     insert_call_summary,
+    insert_call_debug_log,
 )
 # build_context_injection replaced by set_global_data per SDK Section 6.16
 from services.fallbacks import get_fallback_node_config
@@ -415,6 +417,10 @@ When booking, offer the next available slot first. If they need a different time
             "conversation_id": phone,
             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
             "local_tz": "America/Los_Angeles",
+            # Debug webhook for capturing transcripts and tool calls
+            # Per SDK line 23689-23690: debug_webhook_url receives debug data, level 2 = max verbosity
+            "debug_webhook_url": f"{self.get_full_url()}/debug-log",
+            "debug_webhook_level": 2,
         })
         
         # Configure voice
@@ -1199,4 +1205,44 @@ When booking, offer the next available slot first. If they need a different time
 # Entry point
 if __name__ == "__main__":
     agent = BarbaraAgent()
+    
+    # Get FastAPI app to add custom endpoints
+    # Per SDK line 17358: get_app() returns the FastAPI application instance
+    app = agent.get_app()
+    
+    @app.post("/debug-log")
+    async def receive_debug_log(request: Request):
+        """
+        Receive debug webhook data from SignalWire.
+        Per SDK line 23689: debug_webhook_url receives debug data including
+        transcripts, tool calls, and other conversation events.
+        """
+        try:
+            data = await request.json()
+            logger.info(f"[DEBUG-WEBHOOK] Received debug data: {data}")
+            
+            # Extract call_id - try common field names
+            call_id = (
+                data.get("call_id") or 
+                data.get("call", {}).get("call_id") or 
+                data.get("ai_session_id") or
+                "unknown"
+            )
+            
+            # Try to determine event type from the data
+            event_type = data.get("event") or data.get("type") or "debug"
+            
+            # Store to database
+            insert_call_debug_log(
+                call_id=call_id,
+                event_type=event_type,
+                event_data=data,
+                lead_id=None  # We can enhance this later to look up lead from call data
+            )
+            
+            return {"status": "ok"}
+        except Exception as e:
+            logger.error(f"[DEBUG-WEBHOOK] Error processing debug data: {e}")
+            return {"status": "error", "message": str(e)}
+    
     agent.run()
