@@ -31,7 +31,6 @@ from services.database import (
     get_active_signalwire_models,
     normalize_phone,
     insert_call_summary,
-    insert_call_debug_log,
 )
 # build_context_injection replaced by set_global_data per SDK Section 6.16
 from services.fallbacks import get_fallback_node_config
@@ -93,9 +92,6 @@ class BarbaraAgent(AgentBase):
             name="barbara",
             route="/agent/barbara"
         )
-        
-        # NOTE: add_language() is called in on_swml_request ONLY (per working commit 2bf640c)
-        # Calling it in both __init__ AND on_swml_request breaks the SDK (returns null)
         
         # Base prompt section (required even with contexts per Section 6.8)
         self.prompt_add_section(
@@ -403,12 +399,6 @@ When booking, offer the next available slot first. If they need a different time
         # Configure AI models from database
         # Per Section 3.21 (AI Parameters)
         # All LLM params (temperature, top_p, frequency_penalty, presence_penalty) loaded from agent_params table
-        # Set static_greeting for outbound calls to test if it waits for user speech
-        # This should play immediately when call connects, potentially before DB loads
-        static_greeting = None
-        if direction == "outbound":
-            static_greeting = "Hello! This is Barbara calling about your reverse mortgage inquiry."
-        
         self.set_params({
             "ai_model": models.get("llm_model", "gpt-4.1-mini"),
             "openai_asr_engine": models.get("stt_model", "deepgram:nova-3"),
@@ -421,13 +411,10 @@ When booking, offer the next available slot first. If they need a different time
             "enable_barge": "complete,partial",
             "transparent_barge": models.get("transparent_barge", True),
             "wait_for_user": direction == "outbound",  # Wait for senior to answer on outbound calls
-            "static_greeting": static_greeting,  # TEST: Does this wait for user speech when wait_for_user=True?
             "save_conversation": True,
             "conversation_id": phone,
             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
             "local_tz": "America/Los_Angeles",
-            "debug_webhook_url": "https://barbara-agent.fly.dev/debug-log",
-            "debug_webhook_level": 2,  # 0=off, 1=basic, 2=verbose (full transcripts)
         })
         
         # Configure voice
@@ -1147,110 +1134,9 @@ When booking, offer the next available slot first. If they need a different time
             )
             .connect(broker_phone, final=True)
         )
-    
-    # ----- POST-PROMPT CALLBACK -----
-    
-    def on_summary(self, summary: Optional[Dict[str, Any]], raw_data: Optional[Dict[str, Any]] = None) -> None:
-        """
-        Per SDK Section 10.17.1: Called when call ends with post-prompt data.
-        Receives the JSON summary we requested in set_post_prompt().
-        
-        Args:
-            summary: Parsed post-prompt data (our JSON schema)
-            raw_data: Full POST data including call_id, caller_id_num, call_duration
-        """
-        if not raw_data:
-            logger.warning("[SUMMARY] on_summary called without raw_data")
-            return
-        
-        # Extract call metadata
-        call_id = raw_data.get("call_id", "unknown")
-        phone = raw_data.get("caller_id_num", "")
-        duration = raw_data.get("call_duration", 0)
-        
-        logger.info(f"[SUMMARY] Call ended - id: {call_id}, phone: {phone}, duration: {duration}s")
-        
-        if not summary:
-            logger.warning(f"[SUMMARY] No summary data for call {call_id}")
-            return
-        
-        # Log the summary
-        outcome = summary.get("outcome", "unknown")
-        logger.info(f"[SUMMARY] Outcome: {outcome}")
-        logger.info(f"[SUMMARY] Sentiment: {summary.get('caller_sentiment', 'unknown')}")
-        logger.info(f"[SUMMARY] Objections: {summary.get('objections_raised', [])}")
-        
-        # Look up lead to get IDs for database insert
-        lead = get_lead_by_phone(phone) if phone else None
-        lead_id = lead.get("id") if lead else None
-        broker_id = lead.get("assigned_broker_id") if lead else None
-        
-        # Get call direction from conversation state
-        state = get_conversation_state(phone) if phone else None
-        direction = "inbound"  # Default
-        if state and state.get("conversation_data"):
-            direction = state["conversation_data"].get("call_direction", "inbound")
-        
-        # Insert into interactions table
-        success = insert_call_summary(
-            phone=phone,
-            lead_id=lead_id,
-            broker_id=broker_id,
-            call_id=call_id,
-            duration_seconds=duration,
-            direction=direction,
-            outcome=outcome,
-            summary_data=summary
-        )
-        
-        if success:
-            logger.info(f"[SUMMARY] ✅ Saved call summary for {phone}")
-        else:
-            logger.error(f"[SUMMARY] ❌ Failed to save call summary for {phone}")
 
 
 # Entry point
 if __name__ == "__main__":
     agent = BarbaraAgent()
-    
-    # Add debug webhook endpoint
-    app = agent.get_app()
-    
-    @app.post("/debug-log")
-    async def debug_webhook(request):
-        """
-        Receives debug events from SignalWire (transcripts, tool calls, context switches).
-        Stores in call_debug_logs table for Vue portal to display.
-        """
-        try:
-            data = await request.json()
-            
-            # Extract key fields
-            call_id = data.get("call_id", "unknown")
-            event_type = data.get("event_type", "unknown")
-            
-            # Try to get lead_id from phone number if available
-            lead_id = None
-            if "caller_id_num" in data or "from" in data.get("call", {}):
-                caller_num = data.get("caller_id_num") or data.get("call", {}).get("from", "")
-                if caller_num:
-                    lead = get_lead_by_phone(caller_num)
-                    if lead:
-                        lead_id = lead.get("id")
-            
-            # Store in database
-            insert_call_debug_log(
-                call_id=call_id,
-                event_type=event_type,
-                event_data=data,
-                lead_id=lead_id
-            )
-            
-            logger.info(f"[DEBUG] Logged {event_type} event for call {call_id}")
-            return {"status": "ok"}
-            
-        except Exception as e:
-            logger.error(f"[DEBUG] Error processing debug webhook: {e}", exc_info=True)
-            return {"status": "error", "message": str(e)}
-    
     agent.run()

@@ -30,6 +30,7 @@ const BRIDGE_URL = process.env.BRIDGE_URL || 'https://bridge.northflank.app';
 const BRIDGE_API_KEY = process.env.BRIDGE_API_KEY;
 
 // SignalWire credentials for outbound calls
+// IMPORTANT: Use the original env var names that are confirmed working in Fly
 const SIGNALWIRE_PROJECT_ID = process.env.SIGNALWIRE_PROJECT_ID;
 const SIGNALWIRE_API_TOKEN = process.env.SIGNALWIRE_API_TOKEN;
 const SIGNALWIRE_SPACE_URL = process.env.SIGNALWIRE_SPACE_URL;
@@ -64,6 +65,97 @@ const parsedAllowedAddresses = SIGNALWIRE_ALLOWED_ADDRESSES
   .split(',')
   .map(addr => addr.trim())
   .filter(Boolean);
+
+// Supabase config for looking up broker phone numbers
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+
+/**
+ * Get the broker's SignalWire phone number for outbound calls
+ * Looks up: lead_id -> assigned_broker_id -> phone_numbers.assigned_broker_id
+ * Returns the first active phone number for the broker, or null if not found
+ */
+async function getBrokerPhoneNumber(leadId, brokerId = null) {
+  app.log.info({ lead_id: leadId, broker_id: brokerId, supabase_configured: !!(SUPABASE_URL && SUPABASE_ANON_KEY) }, '🔍 Starting broker phone lookup');
+  
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    app.log.warn('⚠️ Supabase not configured - cannot look up broker phone');
+    return null;
+  }
+
+  try {
+    let brokerIdToUse = brokerId;
+
+    // If no broker_id provided, look it up from the lead
+    if (!brokerIdToUse && leadId) {
+      const leadUrl = `${SUPABASE_URL}/rest/v1/leads?id=eq.${leadId}&select=assigned_broker_id`;
+      app.log.info({ url: leadUrl }, '🔍 Fetching lead to get broker_id');
+      
+      const leadResponse = await fetch(leadUrl, {
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+        }
+      });
+      
+      const leadResponseText = await leadResponse.text();
+      app.log.info({ status: leadResponse.status, body: leadResponseText.substring(0, 500) }, '📋 Lead query response');
+      
+      let leads;
+      try {
+        leads = JSON.parse(leadResponseText);
+      } catch (parseError) {
+        app.log.error({ error: parseError.message, body: leadResponseText }, '❌ Failed to parse lead response');
+        return null;
+      }
+      
+      if (leads.length > 0 && leads[0].assigned_broker_id) {
+        brokerIdToUse = leads[0].assigned_broker_id;
+        app.log.info({ lead_id: leadId, broker_id: brokerIdToUse }, '📍 Found broker for lead');
+      } else {
+        app.log.warn({ lead_id: leadId, leads_count: leads.length }, '⚠️ Lead found but no assigned_broker_id');
+      }
+    }
+
+    if (!brokerIdToUse) {
+      app.log.warn({ lead_id: leadId }, '⚠️ No broker_id found for lead');
+      return null;
+    }
+
+    // Look up the broker's phone numbers
+    const phoneUrl = `${SUPABASE_URL}/rest/v1/phone_numbers?assigned_broker_id=eq.${brokerIdToUse}&is_active=eq.true&select=phone_number,label&order=label.asc&limit=1`;
+    app.log.info({ url: phoneUrl }, '🔍 Fetching broker phone number');
+    
+    const phoneResponse = await fetch(phoneUrl, {
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+      }
+    });
+    
+    const phoneResponseText = await phoneResponse.text();
+    app.log.info({ status: phoneResponse.status, body: phoneResponseText.substring(0, 500) }, '📋 Phone query response');
+    
+    let phones;
+    try {
+      phones = JSON.parse(phoneResponseText);
+    } catch (parseError) {
+      app.log.error({ error: parseError.message, body: phoneResponseText }, '❌ Failed to parse phone response');
+      return null;
+    }
+    
+    if (phones.length > 0) {
+      app.log.info({ broker_id: brokerIdToUse, phone: phones[0].phone_number, label: phones[0].label }, '📞 Found broker SignalWire number');
+      return phones[0].phone_number;
+    }
+
+    app.log.warn({ broker_id: brokerIdToUse, phones_count: phones.length }, '⚠️ No phone numbers found for broker');
+    return null;
+  } catch (error) {
+    app.log.error({ error: error.message, stack: error.stack }, '❌ Error looking up broker phone');
+    return null;
+  }
+}
 
 function getSignalWireAuthHeader() {
   return `Basic ${Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64')}`;
@@ -488,38 +580,108 @@ async function executeTool(name, args) {
     }
     
     case 'update_lead_info': {
-      app.log.info({ lead_id: args.lead_id, updates: Object.keys(args).filter(k => k !== 'lead_id') }, '📝 Updating lead info');
+      const updateFields = Object.keys(args).filter(k => !['lead_id', 'toolCallId'].includes(k));
+      app.log.info({ lead_id: args.lead_id, updates: updateFields }, '📝 Updating lead info');
+      
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+        return {
+          content: [{ type: 'text', text: '❌ Lead info update failed: Supabase not configured' }],
+          isError: true
+        };
+      }
+      
+      if (!args.lead_id) {
+        return {
+          content: [{ type: 'text', text: '❌ Lead info update failed: lead_id is required' }],
+          isError: true
+        };
+      }
       
       try {
-        const response = await fetch(`${BRIDGE_URL}/api/tools/update_lead_info`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${BRIDGE_API_KEY}`
-          },
-          body: JSON.stringify(args)
-        });
+        // Map incoming args to leads table columns
+        const leadUpdate = {};
+        if (args.first_name) leadUpdate.first_name = args.first_name;
+        if (args.last_name) leadUpdate.last_name = args.last_name;
+        if (args.status) leadUpdate.status = args.status;
+        if (args.property_address) leadUpdate.property_address = args.property_address;
+        if (args.property_city) leadUpdate.property_city = args.property_city;
+        if (args.property_state) leadUpdate.property_state = args.property_state;
+        if (args.property_zip) leadUpdate.property_zip = args.property_zip;
+        if (args.property_value) leadUpdate.property_value = args.property_value;
+        if (args.estimated_equity) leadUpdate.estimated_equity = args.estimated_equity;
+        if (args.age) leadUpdate.age = args.age;
         
-        const result = await response.json();
-        
-        if (result.success) {
-          app.log.info('✅ Lead info updated');
-          const updates = Object.keys(args).filter(k => k !== 'lead_id');
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `✅ Lead Info Updated Successfully!\n\n` +
-                      `👤 Lead ID: ${args.lead_id}\n` +
-                      `📝 Updated fields: ${updates.join(', ')}`
-              }
-            ]
-          };
-        } else {
-          throw new Error(result.error || 'Lead info update failed');
+        // Update leads table if we have lead fields
+        if (Object.keys(leadUpdate).length > 0) {
+          leadUpdate.updated_at = new Date().toISOString();
+          
+          const response = await fetch(
+            `${SUPABASE_URL}/rest/v1/leads?id=eq.${args.lead_id}`,
+            {
+              method: 'PATCH',
+              headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'return=minimal'
+              },
+              body: JSON.stringify(leadUpdate)
+            }
+          );
+          
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Supabase error: ${errorText}`);
+          }
         }
+        
+        // Handle phone number updates separately (phone_numbers table)
+        if (args.primary_phone || args.e164_phone) {
+          const phoneNumber = args.e164_phone || args.primary_phone;
+          // Normalize to E.164
+          const digits = phoneNumber.replace(/\D/g, '');
+          const e164 = digits.length === 10 ? `+1${digits}` : 
+                       digits.length === 11 && digits.startsWith('1') ? `+${digits}` : 
+                       phoneNumber.startsWith('+') ? phoneNumber : `+${digits}`;
+          
+          // Upsert phone number
+          const phoneResponse = await fetch(
+            `${SUPABASE_URL}/rest/v1/phone_numbers`,
+            {
+              method: 'POST',
+              headers: {
+                'apikey': SUPABASE_ANON_KEY,
+                'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+                'Content-Type': 'application/json',
+                'Prefer': 'resolution=merge-duplicates'
+              },
+              body: JSON.stringify({
+                lead_id: args.lead_id,
+                phone_number: e164,
+                label: 'primary',
+                is_active: true
+              })
+            }
+          );
+          
+          if (!phoneResponse.ok) {
+            app.log.warn({ status: phoneResponse.status }, '⚠️ Phone number update may have failed');
+          }
+        }
+        
+        app.log.info('✅ Lead info updated');
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `✅ Lead Info Updated Successfully!\n\n` +
+                    `👤 Lead ID: ${args.lead_id}\n` +
+                    `📝 Updated fields: ${updateFields.join(', ')}`
+            }
+          ]
+        };
       } catch (error) {
-        app.log.error({ error }, '❌ Lead info update error');
+        app.log.error({ error: error.message }, '❌ Lead info update error');
         return {
           content: [
             {
@@ -533,108 +695,90 @@ async function executeTool(name, args) {
     }
     
     case 'create_outbound_call': {
+      // =======================================================================
+      // OUTBOUND CALLS VIA SIGNALWIRE SWML CALLING API
+      // =======================================================================
+      // Calls SignalWire directly with Barbara agent as the SWML webhook.
+      // Barbara uses query params (lead_id, direction) to load the right data.
+      // =======================================================================
+      
       app.log.info({ 
-        to_phone: args.to_phone, 
         lead_id: args.lead_id,
-        from_phone: args.from_phone || SIGNALWIRE_PHONE_NUMBER
-      }, '📞 Creating outbound call via SignalWire (SWML)');
+        to_phone: args.to_phone,
+        from_phone: args.from_phone,
+        broker_id: args.broker_id
+      }, '📞 Creating outbound call via SignalWire SWML API');
       
       if (!SIGNALWIRE_FEATURES_ENABLED) {
         return {
           content: [
             {
               type: 'text',
-              text: `❌ Outbound call failed: SignalWire credentials not configured.\n\n` +
-                    `Required env vars: SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN, SIGNALWIRE_SPACE_URL, SIGNALWIRE_PHONE_NUMBER`
+              text: `❌ Outbound call failed: SignalWire credentials not configured`
             }
           ],
           isError: true
         };
       }
       
-      // Normalize phone number to E.164 format (required by SignalWire API)
-      const normalizeE164 = (phone) => {
-        if (!phone) return null;
-        const digits = phone.replace(/\D/g, '');
-        if (digits.length === 10) return `+1${digits}`;
-        if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
-        if (!phone.startsWith('+')) return `+${digits}`;
-        return phone;
-      };
-      
-      // Validate and normalize to_phone
-      const toPhone = normalizeE164(args.to_phone);
-      if (!toPhone) {
+      if (!BARBARA_AGENT_URL) {
         return {
           content: [
             {
               type: 'text',
-              text: `❌ Outbound call failed: Invalid or missing to_phone number`
+              text: `❌ Outbound call failed: BARBARA_AGENT_URL not configured`
             }
           ],
           isError: true
         };
       }
       
-      // Normalize from_phone
-      const fromPhone = normalizeE164(args.from_phone) || SIGNALWIRE_PHONE_NUMBER;
-      
       try {
-        const auth = Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64');
+        // Normalize phone number to E.164
+        const normalizeE164 = (phone) => {
+          if (!phone) return null;
+          const digits = phone.replace(/\D/g, '');
+          if (digits.length === 10) return `+1${digits}`;
+          if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+          if (!phone.startsWith('+')) return `+${digits}`;
+          return phone;
+        };
         
-        // Build the agent URL with lead context
+        const toPhone = normalizeE164(args.to_phone);
+        if (!toPhone) {
+          throw new Error('Invalid to_phone number');
+        }
+        
+        // Get broker's SignalWire number or use default
+        let fromPhone = args.from_phone;
+        if (!fromPhone) {
+          const brokerPhone = await getBrokerPhoneNumber(args.lead_id, args.broker_id);
+          fromPhone = brokerPhone || SIGNALWIRE_PHONE_NUMBER;
+        }
+        fromPhone = normalizeE164(fromPhone);
+        
+        app.log.info({ 
+          to_phone: toPhone, 
+          from_phone: fromPhone,
+          using_broker_phone: fromPhone !== SIGNALWIRE_PHONE_NUMBER
+        }, '📱 Phone numbers resolved');
+        
+        // Build Barbara agent URL with query params for outbound context
         const agentUrl = new URL(BARBARA_AGENT_URL);
         agentUrl.searchParams.set('lead_id', args.lead_id);
-        if (args.broker_id) {
-          agentUrl.searchParams.set('broker_id', args.broker_id);
-        }
         agentUrl.searchParams.set('direction', 'outbound');
         
-        app.log.info({ 
-          swml_url: agentUrl.toString(),
-          to_phone_normalized: toPhone,
-          from_phone_normalized: fromPhone
-        }, '📍 Fetching SWML from agent');
+        app.log.info({ agent_url: agentUrl.toString() }, '🔗 Barbara agent URL');
         
-        // CRITICAL: Fetch SWML from agent FIRST, then pass inline
-        // Using 'url' parameter makes SignalWire treat it as LaML/cXML
-        // Using 'swml' parameter tells SignalWire it's SWML
-        const swmlResponse = await fetch(agentUrl.toString(), {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            call: {
-              direction: 'outbound',
-              to: toPhone,
-              from: fromPhone
-            }
-          })
-        });
+        // Use SignalWire Calling API (SWML-native) - sends JSON to SWML endpoints
+        // POST /api/calling/calls
+        const apiUrl = `${SIGNALWIRE_SPACE_URL}/api/calling/calls`;
         
-        if (!swmlResponse.ok) {
-          throw new Error(`Failed to fetch SWML from agent: ${swmlResponse.status}`);
-        }
-        
-        const swmlDocument = await swmlResponse.text();
-        app.log.info({ 
-          swml_length: swmlDocument.length,
-          swml_preview: swmlDocument.substring(0, 200)
-        }, '📄 Got SWML from agent');
-        
-        // Validate we got actual SWML, not null
-        if (!swmlDocument || swmlDocument === 'null' || swmlDocument.trim() === '') {
-          throw new Error('Agent returned empty/null SWML - check agent logs');
-        }
-        
-        // Use SignalWire Calling API with SWML parameter (not url!)
-        // Per docs: 'swml' = inline SWML, 'url' = LaML/cXML endpoint
+        // Build JSON payload for Calling API (SWML-native)
         const callPayload = {
           command: 'dial',
           params: {
-            swml: swmlDocument,  // Inline SWML - SignalWire knows it's SWML!
+            url: agentUrl.toString(),  // SWML endpoint URL
             from: fromPhone,
             to: toPhone,
             caller_id: fromPhone,
@@ -644,16 +788,18 @@ async function executeTool(name, args) {
         };
         
         app.log.info({ 
-          api_url: `${SIGNALWIRE_SPACE_URL}/api/calling/calls`,
-          payload: callPayload
-        }, '📤 Calling SignalWire API');
+          api_url: apiUrl,
+          to: callPayload.params.to,
+          from: callPayload.params.from,
+          url: callPayload.params.url
+        }, '📤 Calling SignalWire SWML API');
         
-        const response = await fetch(`${SIGNALWIRE_SPACE_URL}/api/calling/calls`, {
+        const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             'Accept': 'application/json',
-            'Authorization': `Basic ${auth}`
+            'Authorization': getSignalWireAuthHeader()
           },
           body: JSON.stringify(callPayload)
         });
@@ -675,33 +821,31 @@ async function executeTool(name, args) {
           throw new Error(`Invalid JSON from SignalWire: ${responseText.substring(0, 200)}`);
         }
         
-        // API returns call object with id and state
-        const callId = result.call?.id || result.call_id || result.id;
-        
-        if (!callId && !response.ok) {
-          throw new Error(result.message || result.error || `Call creation failed (${response.status})`);
-        }
-        
-        app.log.info({ call_id: callId, state: result.call?.state }, '✅ Outbound call initiated');
+        app.log.info({ 
+          call_id: result.call_id,
+          status: result.status
+        }, '✅ Outbound call initiated');
         
         return {
           content: [
             {
               type: 'text',
               text: `✅ Outbound Call Initiated!\n\n` +
-                    `📞 Call ID: ${callId || 'pending'}\n` +
+                    `📞 Call ID: ${result.call_id}\n` +
                     `📱 From: ${fromPhone}\n` +
                     `📱 To: ${toPhone}\n` +
                     `👤 Lead ID: ${args.lead_id}\n` +
-                    `🤖 Agent: Barbara (SignalWire AI SDK)\n` +
-                    `🔗 SWML URL: ${agentUrl.toString()}\n` +
-                    `💬 Status: ${result.call?.state || result.state || result.status || 'initiated'}`
+                    `📊 Status: ${result.status || 'queued'}`
             }
           ]
         };
         
       } catch (error) {
-        app.log.error({ error }, '❌ Outbound call failed');
+        app.log.error({ 
+          error: error.message,
+          stack: error.stack,
+          lead_id: args.lead_id
+        }, '❌ Outbound call failed');
         return {
           content: [
             {
