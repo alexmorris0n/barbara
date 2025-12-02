@@ -583,7 +583,6 @@ async function executeTool(name, args) {
         const auth = Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64');
         
         // Build the agent URL with lead context
-        // This URL must serve SWML (not LaML)
         const agentUrl = new URL(BARBARA_AGENT_URL);
         agentUrl.searchParams.set('lead_id', args.lead_id);
         if (args.broker_id) {
@@ -595,14 +594,47 @@ async function executeTool(name, args) {
           swml_url: agentUrl.toString(),
           to_phone_normalized: toPhone,
           from_phone_normalized: fromPhone
-        }, '📍 SWML URL for outbound call');
+        }, '📍 Fetching SWML from agent');
         
-        // Use SignalWire Calling API with proper format per docs:
-        // POST /api/calling/calls with { command: "dial", params: { url, from, to, ... } }
+        // CRITICAL: Fetch SWML from agent FIRST, then pass inline
+        // Using 'url' parameter makes SignalWire treat it as LaML/cXML
+        // Using 'swml' parameter tells SignalWire it's SWML
+        const swmlResponse = await fetch(agentUrl.toString(), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          body: JSON.stringify({
+            call: {
+              direction: 'outbound',
+              to: toPhone,
+              from: fromPhone
+            }
+          })
+        });
+        
+        if (!swmlResponse.ok) {
+          throw new Error(`Failed to fetch SWML from agent: ${swmlResponse.status}`);
+        }
+        
+        const swmlDocument = await swmlResponse.text();
+        app.log.info({ 
+          swml_length: swmlDocument.length,
+          swml_preview: swmlDocument.substring(0, 200)
+        }, '📄 Got SWML from agent');
+        
+        // Validate we got actual SWML, not null
+        if (!swmlDocument || swmlDocument === 'null' || swmlDocument.trim() === '') {
+          throw new Error('Agent returned empty/null SWML - check agent logs');
+        }
+        
+        // Use SignalWire Calling API with SWML parameter (not url!)
+        // Per docs: 'swml' = inline SWML, 'url' = LaML/cXML endpoint
         const callPayload = {
           command: 'dial',
           params: {
-            url: agentUrl.toString(),  // SWML endpoint URL
+            swml: swmlDocument,  // Inline SWML - SignalWire knows it's SWML!
             from: fromPhone,
             to: toPhone,
             caller_id: fromPhone,
