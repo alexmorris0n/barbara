@@ -94,9 +94,8 @@ class BarbaraAgent(AgentBase):
             route="/agent/barbara"
         )
         
-        # Per SDK Section 3.11: Language/voice configured here as fallback.
-        # Dynamic voice from DB is set in on_swml_request and will override this.
-        self.add_language("English", "en-US", "rime.spore")
+        # NOTE: add_language() is called in on_swml_request ONLY (per working commit 2bf640c)
+        # Calling it in both __init__ AND on_swml_request breaks the SDK (returns null)
         
         # Base prompt section (required even with contexts per Section 6.8)
         self.prompt_add_section(
