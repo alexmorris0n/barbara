@@ -427,7 +427,8 @@ When booking, offer the next available slot first. If they need a different time
             "conversation_id": phone,
             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
             "local_tz": "America/Los_Angeles",
-            "debug_webhook_url": "https://barbara-agent.fly.dev/debug-log",  # Capture transcripts & tool calls
+            "debug_webhook_url": "https://barbara-agent.fly.dev/debug-log",
+            "debug_webhook_level": 2,  # 0=off, 1=basic, 2=verbose (full transcripts)
         })
         
         # Configure voice
