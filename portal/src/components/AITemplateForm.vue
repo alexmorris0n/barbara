@@ -305,7 +305,7 @@ const selectedPreset = ref(null)
 const saving = ref(false)
 const previewLoading = ref(null)
 
-// Form data - AI Template defaults
+// Form data - LiveKit Inference defaults
 const formData = ref({
   name: '',
   description: '',
@@ -351,7 +351,7 @@ const ttsModelOptions = ref([])
 const ttsVoiceOptions = ref([])
 const llmModelOptions = ref([])
 
-// Preset options
+// Preset options - LiveKit Inference
 const presetOptions = ref([
   { label: 'Premium (ElevenLabs + GPT-4o)', value: 'premium' },
   { label: 'Balanced (ElevenLabs + Claude Haiku)', value: 'balanced' },
@@ -367,7 +367,8 @@ const rules = {
   llm_provider: { required: true, message: 'Please select an LLM provider', trigger: 'change' }
 }
 
-// Cost calculation (per minute estimates)
+// Cost calculation - LiveKit Inference pricing (per minute, converted from hourly rates)
+// Source: https://livekit.io/pricing/inference
 const sttCost = computed(() => {
   const costs = {
     // Deepgram models (per hour → per min)

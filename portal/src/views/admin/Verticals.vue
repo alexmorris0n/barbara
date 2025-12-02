@@ -210,6 +210,13 @@
               >
                 SignalWire
               </button>
+              <button 
+                class="platform-tab" 
+                :class="{ active: selectedPlatform === 'livekit' }"
+                @click="selectedPlatform = 'livekit'"
+              >
+                LiveKit
+              </button>
             </div>
 
             <!-- SignalWire Configuration -->

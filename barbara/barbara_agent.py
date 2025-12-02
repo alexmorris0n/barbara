@@ -400,6 +400,12 @@ When booking, offer the next available slot first. If they need a different time
         # Configure AI models from database
         # Per Section 3.21 (AI Parameters)
         # All LLM params (temperature, top_p, frequency_penalty, presence_penalty) loaded from agent_params table
+        # Set static_greeting for outbound calls to test if it waits for user speech
+        # This should play immediately when call connects, potentially before DB loads
+        static_greeting = None
+        if direction == "outbound":
+            static_greeting = "Hello! This is Barbara calling about your reverse mortgage inquiry."
+        
         self.set_params({
             "ai_model": models.get("llm_model", "gpt-4.1-mini"),
             "openai_asr_engine": models.get("stt_model", "deepgram:nova-3"),
@@ -412,6 +418,7 @@ When booking, offer the next available slot first. If they need a different time
             "enable_barge": "complete,partial",
             "transparent_barge": models.get("transparent_barge", True),
             "wait_for_user": direction == "outbound",  # Wait for senior to answer on outbound calls
+            "static_greeting": static_greeting,  # TEST: Does this wait for user speech when wait_for_user=True?
             "save_conversation": True,
             "conversation_id": phone,
             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",

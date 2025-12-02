@@ -316,7 +316,7 @@ function testTemplate(template) {
   // Navigate to playground with template ID and return path
   const currentPath = router.currentRoute.value.fullPath
   router.push({
-    path: '/admin/playground',
+    path: '/admin/livekit-playground',
     query: { 
       template: template.id,
       returnTo: currentPath,

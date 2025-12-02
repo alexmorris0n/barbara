@@ -111,7 +111,7 @@ const columns = [
     render: (row) => h(
       NTag,
       { 
-        type: 'default',
+        type: row.current_route === 'livekit' ? 'success' : 'default',
         size: 'small',
         round: true
       },
