@@ -94,6 +94,10 @@ class BarbaraAgent(AgentBase):
             route="/agent/barbara"
         )
         
+        # Per SDK Section 3.11: Language/voice MUST be configured in __init__
+        # Without this, agent returns null SWML
+        self.add_language("English", "en-US", "rime.spore")
+        
         # Base prompt section (required even with contexts per Section 6.8)
         self.prompt_add_section(
             "Role",
