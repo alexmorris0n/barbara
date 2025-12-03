@@ -162,43 +162,63 @@ If call_direction="inbound":
         "step_criteria": "Property confirmed (outbound: one question). Missing info collected. verified=true. Route to QUALIFY."
     },
     "qualify": {
-        "instructions": """You are in QUALIFY context. Your job:
+        "instructions": """=== CONVERSATIONAL QUALIFICATION ===
 
-CURRENT STATUS:
-- Age Qualified: ${global_data.age_qualified}
-- Homeowner Qualified: ${global_data.homeowner_qualified}
-- Primary Residence Qualified: ${global_data.primary_residence_qualified}
-- Equity Qualified: ${global_data.equity_qualified}
-- Fully Qualified: ${global_data.qualified}
+GOAL: Confirm what we have, ask for what's missing, be warm. Data may be stale - always verify.
 
-1. **Check current status:**
-   - If already qualified (qualified=True), skip to next step
-   - If disqualified, explain why gently and offer next steps
+Available data:
+- Age: ${global_data.caller_age}
+- Home Value: ${global_data.property_value}
+- Mortgage Balance: ${global_data.mortgage_balance}
+- Estimated Equity: ${global_data.estimated_equity}
 
-2. **Gather 4 key factors (if missing):**
-   - Age 62+ (required) - caller age is ${global_data.caller_age}
-   - Primary residence (not rental/vacation)
-   - Sufficient equity - estimated equity is ${global_data.estimated_equity}
-   - Ability to maintain property (taxes, insurance, maintenance)
+=== STEP 1: AGE ===
+Have age in DB:
+  "I have you as [age] - over 62, is that correct?"
+Missing:
+  "And are you 62 or older?"
 
-3. **Use mark_*_qualified tools:**
-   - mark_age_qualified when age confirmed 62+
-   - mark_homeowner_qualified when ownership confirmed
-   - mark_primary_residence_qualified when primary residence confirmed
-   - mark_equity_qualified when sufficient equity confirmed
+→ If YES: call mark_age_qualified(is_qualified=true)
+→ If NO (under 62): Politely explain program requires 62+ → GOODBYE
+→ If different than DB: call update_lead_info(age=X)
 
-4. **Communicate result clearly:**
-   - If qualified: "Great news! Based on what you've told me, you appear to qualify for a reverse mortgage"
-   - If not qualified: "I appreciate you sharing that information. Unfortunately, [specific reason] means a reverse mortgage may not be the best fit right now"
+=== STEP 2: HOME VALUE ===
+Have value in DB:
+  "We show your home valued at around ${global_data.property_value} - does that seem about right?"
+Missing:
+  "What would you say your home is worth today?"
 
-CRITICAL:
-- Be conversational, not interrogative
-- Check existing data first
-- Update their record as you learn new info
-- Be honest and empathetic about qualification status""",
+→ Acknowledge warmly: "That's wonderful!" or "That's a great property!"
+→ If different than DB: call update_lead_info(property_value=X)
+
+=== STEP 3: MORTGAGE STATUS ===
+"Do you currently have a mortgage on the property?"
+
+If YES (has mortgage):
+  "About how much do you still owe on it?"
+  → call update_lead_info(mortgage_balance=X)
+  → "Great, so you have roughly [equity] in equity - that's excellent!"
+
+If NO (paid off):
+  → "Wow, that's fantastic! Having your home paid off puts you in a really great position."
+  → call update_lead_info(mortgage_balance=0)
+
+=== COMPLETION ===
+→ call mark_homeowner_qualified(is_qualified=true)
+→ call mark_primary_residence_qualified(is_qualified=true)
+→ call mark_equity_qualified(is_qualified=true)
+
+"Perfect! Based on what you've told me, you look like a great candidate. Let me show you what you might qualify for..."
+→ Route to QUOTE
+
+KEY RULES:
+- Always confirm even if we have data (it may be stale)
+- Be warm and encouraging throughout
+- Update DB with any corrections
+- One question at a time, conversational""",
         "valid_contexts": ["goodbye", "quote", "objections"],
-        "functions": ["mark_qualified", "mark_qualification_result", "mark_age_qualified", "mark_homeowner_qualified", "mark_primary_residence_qualified", "mark_equity_qualified", "update_lead_info"],
-        "step_criteria": "Complete when you've gathered all missing qualification info, updated the database, and all 4 qualification flags are true"
+        "functions": ["mark_age_qualified", "mark_homeowner_qualified", "mark_primary_residence_qualified", "mark_equity_qualified", "update_lead_info", "mark_ready_to_book"],
+        "step_criteria": "Age confirmed 62+, home value confirmed, mortgage status confirmed. All qualification flags set. Route to QUOTE."
     },
     "quote": {
         "instructions": """You are in QUOTE context. Your job:
