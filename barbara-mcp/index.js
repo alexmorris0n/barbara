@@ -774,11 +774,36 @@ async function executeTool(name, args) {
         // POST /api/calling/calls
         const apiUrl = `${SIGNALWIRE_SPACE_URL}/api/calling/calls`;
         
-        // Build JSON payload for Calling API (SWML-native)
+        // Build JSON payload for Calling API with inline SWML
+        // Using 'swml' param instead of 'url' to ensure SWML mode (not LaML)
+        // static_greeting plays immediately while fetching full agent config
         const callPayload = {
           command: 'dial',
           params: {
-            url: agentUrl.toString(),  // SWML endpoint URL
+            swml: {
+              version: '1.0.0',
+              sections: {
+                main: [
+                  { sleep: { time: 1200 } },
+                  {
+                    ai: {
+                      params: {
+                        static_greeting: "Hi, this is Barbara calling. One moment please."
+                      },
+                      SWAIG: {
+                        defaults: {},
+                        includes: [
+                          {
+                            url: agentUrl.toString(),
+                            functions: ['all']
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            },
             from: fromPhone,
             to: toPhone,
             caller_id: fromPhone,
@@ -791,8 +816,9 @@ async function executeTool(name, args) {
           api_url: apiUrl,
           to: callPayload.params.to,
           from: callPayload.params.from,
-          url: callPayload.params.url
-        }, '📤 Calling SignalWire SWML API');
+          agent_url: agentUrl.toString(),
+          using_inline_swml: true
+        }, '📤 Calling SignalWire with inline SWML');
         
         const response = await fetch(apiUrl, {
           method: 'POST',
