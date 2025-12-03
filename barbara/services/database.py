@@ -522,6 +522,7 @@ def insert_call_summary(
             "content": summary_data.get("summary", ""),
             "metadata": {
                 "call_id": call_id,
+                "phone": phone,  # Store phone for trigger-based lead linking
                 "post_prompt_data": summary_data,
                 "qualification_status": summary_data.get("qualification_status"),
                 "objections": summary_data.get("objections_raised", []),
