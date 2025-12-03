@@ -241,6 +241,19 @@ Rules:
             })
             logger.info("[BARBARA] Added US ringback for inbound call")
         
+        # POST-ANSWER: Immediate greeting for OUTBOUND calls
+        # This plays BEFORE the AI loads, filling the silence gap
+        # Prevents leads from saying "Hello?" multiple times and hanging up
+        if direction == "outbound":
+            # Get voice from database (loaded later, but we need it now)
+            # Using default fallback since models aren't loaded yet
+            outbound_voice = "elevenlabs.rachel"  # Default Barbara voice
+            self.add_post_answer_verb("play", {
+                "url": "say:Hi there, this is Barbara calling from Equity Connect about your inquiry regarding reverse mortgage options.",
+                "say_voice": outbound_voice
+            })
+            logger.info(f"[BARBARA] Added outbound greeting with voice: {outbound_voice}")
+        
         # Load lead data from database
         # For OUTBOUND: try lead_id from URL first, then fall back to phone lookup
         # For INBOUND: use phone lookup
