@@ -803,15 +803,27 @@ When booking, offer the next available slot first. If they need a different time
     
     @AgentBase.tool(
         name="mark_address_verified",
-        description="Mark that caller's property address has been verified",
+        description="Mark property address verified. For OUTBOUND calls, this auto-verifies phone and email too. Pass call_direction='outbound' to enable. Pass new_address if collecting a missing/corrected address.",
         parameters={
             "type": "object",
-            "properties": {}
+            "properties": {
+                "call_direction": {
+                    "type": "string",
+                    "description": "Pass 'outbound' to auto-verify phone+email too, or 'inbound' for address only",
+                    "enum": ["outbound", "inbound"]
+                },
+                "new_address": {
+                    "type": "string",
+                    "description": "New/corrected property address if collecting missing info"
+                }
+            }
         }
     )
     def mark_address_verified(self, args, raw_data):
         phone = raw_data.get("caller_id_num", "")
-        return handle_mark_address_verified(phone)
+        call_direction = args.get("call_direction")
+        new_address = args.get("new_address")
+        return handle_mark_address_verified(phone, call_direction, new_address)
     
     # ----- QUALIFICATION TOOLS -----
     

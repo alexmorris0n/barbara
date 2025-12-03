@@ -107,28 +107,59 @@ CRITICAL:
         "step_criteria": "Complete after greeting and initial rapport. At least 2 conversational turns."
     },
     "verify": {
-        "instructions": """You are in VERIFY context. Your job is to confirm caller identity and ensure we have complete contact information.
+        "instructions": """=== LOW-FRICTION VERIFICATION ===
 
-CURRENT STATUS:
-- Phone Verified: ${global_data.phone_verified}
-- Email Verified: ${global_data.email_verified}
-- Address Verified: ${global_data.address_verified}
-- Fully Verified: ${global_data.verified}
+GOAL: One quick confirmation if we have everything. Only ask for what's missing.
 
-1. Check what we already know: Property at ${global_data.property_address}, ${global_data.property_city}
-2. Confirm their identity: "Just to make sure I have the right person, is your property at ${global_data.property_address}?"
-3. Check for missing info (email, property details, age)
-4. If anything is wrong or missing, ask conversationally
-5. Use update_lead_info to update their record
-6. Once confirmed, use the mark_*_verified tools to mark each item as verified
+Check what we have:
+- Address: ${global_data.property_address}
+- Email: ${global_data.caller_email}
+- Call Direction: ${global_data.call_direction}
 
-CRITICAL:
-- Don't ask for info we already have
-- If they correct information, update it immediately
-- Make it feel conversational, not like a form""",
+=== SCENARIO 1: OUTBOUND + HAVE EVERYTHING ===
+If outbound call AND we have property_address AND email:
+
+One question only:
+"Just to verify, this is for your home on ${global_data.property_address}, right?"
+WAIT for response
+
+If YES:
+→ call mark_address_verified(call_direction="outbound")
+   (This auto-marks phone, email, and address all verified)
+→ "Perfect!" → Route to QUALIFY
+
+If NO or wrong address:
+→ "Oh! What's the correct address?"
+→ call mark_address_verified(call_direction="outbound", new_address="[their answer]")
+→ Route to QUALIFY
+
+=== SCENARIO 2: MISSING INFO ===
+If anything is missing, collect it naturally:
+
+Missing address?
+→ "What property are you interested in discussing?"
+→ Store with update_lead_info, then mark_address_verified
+
+Missing email?
+→ "And what's the best email to send your information to?"
+→ Store with update_lead_info, then mark_email_verified
+
+Then proceed to verify as above.
+
+=== SCENARIO 3: INBOUND CALL ===
+If call_direction="inbound":
+- Verify each piece individually
+- Use mark_phone_verified, mark_email_verified, mark_address_verified separately
+- Call mark_verified when all complete
+
+=== KEY RULES ===
+- ONE question for outbound warm leads with complete data
+- Only ask for what we DON'T have
+- Don't make them feel like they're filling out a form
+- Warm and conversational""",
         "valid_contexts": ["qualify", "answer", "quote", "objections"],
-        "functions": ["verify_caller_identity", "update_lead_info", "mark_verified", "mark_phone_verified", "mark_email_verified", "mark_address_verified"],
-        "step_criteria": "Complete when caller confirms their info is correct OR you've updated incorrect info"
+        "functions": ["update_lead_info", "mark_verified", "mark_phone_verified", "mark_email_verified", "mark_address_verified", "mark_ready_to_book"],
+        "step_criteria": "Property confirmed (outbound: one question). Missing info collected. verified=true. Route to QUALIFY."
     },
     "qualify": {
         "instructions": """You are in QUALIFY context. Your job:

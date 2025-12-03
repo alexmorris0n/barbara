@@ -138,8 +138,18 @@ def handle_mark_email_verified(phone: str) -> SwaigFunctionResult:
     return SwaigFunctionResult("Error verifying email")
 
 
-def handle_mark_address_verified(phone: str) -> SwaigFunctionResult:
-    """Mark property address as verified"""
+def handle_mark_address_verified(phone: str, call_direction: str = None, new_address: str = None) -> SwaigFunctionResult:
+    """
+    Mark property address as verified.
+    
+    For OUTBOUND calls: Auto-verifies phone + email too (we called them, they responded)
+    For INBOUND calls: Only verifies address (other flags set separately)
+    
+    Args:
+        phone: Caller phone number
+        call_direction: "outbound" or "inbound" - determines auto-verify behavior
+        new_address: Optional new address if collecting missing info
+    """
     phone = normalize_phone(phone)
     
     lead = get_lead_by_phone(phone)
@@ -152,19 +162,45 @@ def handle_mark_address_verified(phone: str) -> SwaigFunctionResult:
     
     if sb and lead_id:
         try:
+            # Build update payload
+            update_data = {"address_verified": True}
+            global_updates = {"address_verified": True}
+            
+            # If new address provided, update it
+            if new_address:
+                update_data["property_address"] = new_address
+                global_updates["property_address"] = new_address
+                logger.info(f"[VERIFY] Updating address to: {new_address}")
+            
+            # OUTBOUND CALLS: Auto-verify phone + email too
+            # They answered our call (phone verified) and responded to outreach (email verified)
+            if call_direction == "outbound":
+                update_data["phone_verified"] = True
+                update_data["email_verified"] = True
+                update_data["verified"] = True
+                global_updates["phone_verified"] = True
+                global_updates["email_verified"] = True
+                global_updates["verified"] = True
+                logger.info(f"[VERIFY] Outbound call - auto-verifying all for lead {lead_id}")
+            
+            # Update lead record
             sb.table("leads")\
-                .update({"address_verified": True})\
+                .update(update_data)\
                 .eq("id", lead_id)\
                 .execute()
             
             logger.info(f"[VERIFY] Address verified for lead {lead_id}")
             
-            # Check if all verifications complete
-            fully_verified = _check_and_set_verified(phone)
+            # For inbound calls, check if all verifications complete
+            if call_direction != "outbound":
+                fully_verified = _check_and_set_verified(phone)
+                if fully_verified:
+                    global_updates["verified"] = True
             
-            global_updates = {"address_verified": True}
-            if fully_verified:
-                global_updates["verified"] = True
+            # Also update conversation_state for consistency
+            update_conversation_state(phone, {
+                "conversation_data": global_updates
+            })
             
             return (
                 SwaigFunctionResult("Property address verified")
