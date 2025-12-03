@@ -10,7 +10,11 @@ let initPromise = null
 
 export function useAuth() {
   const isAuthenticated = computed(() => !!user.value)
-  const isAdmin = computed(() => userProfile.value?.role === 'admin')
+  const isAdmin = computed(() => {
+  const result = userProfile.value?.role === 'admin'
+  console.log('[useAuth] isAdmin check:', { role: userProfile.value?.role, isAdmin: result })
+  return result
+})
   const isBroker = computed(() => userProfile.value?.role === 'broker')
 
   async function checkAuth() {
