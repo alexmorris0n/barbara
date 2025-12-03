@@ -879,21 +879,21 @@ When booking, offer the next available slot first. If they need a different time
     
     @AgentBase.tool(
         name="calculate_reverse_mortgage",
-        description="ALWAYS call this when presenting a quote or answering 'how much can I get?' questions. Calculate available reverse mortgage funds using accurate HECM formulas - NEVER estimate or guess amounts.",
+        description="ALWAYS call this when presenting a quote or answering 'how much can I get?' questions. Calculate available reverse mortgage funds using accurate HECM formulas with PLF tables - NEVER estimate or guess amounts.",
         parameters={
             "type": "object",
             "properties": {
                 "property_value": {
                     "type": "integer",
-                    "description": "Estimated property value in dollars"
+                    "description": "Current home value in dollars"
                 },
                 "age": {
                     "type": "integer",
                     "description": "Age of the youngest borrower (must be 62+)"
                 },
-                "equity": {
+                "mortgage_balance": {
                     "type": "integer",
-                    "description": "Available equity (property value minus mortgage balance). Defaults to property_value if not provided."
+                    "description": "Current mortgage balance to pay off (0 if home is paid off)"
                 }
             },
             "required": ["property_value", "age"]
@@ -910,8 +910,8 @@ When booking, offer the next available slot first. If they need a different time
         phone = raw_data.get("caller_id_num", "")
         property_value = args.get("property_value")
         age = args.get("age")
-        equity = args.get("equity")
-        return handle_calculate(phone, property_value, age, equity)
+        mortgage_balance = args.get("mortgage_balance", 0)
+        return handle_calculate(phone, property_value, age, mortgage_balance)
     
     # ----- KNOWLEDGE TOOL -----
     

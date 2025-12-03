@@ -221,43 +221,51 @@ KEY RULES:
         "step_criteria": "Age confirmed 62+, home value confirmed, mortgage status confirmed. All qualification flags set. Route to QUOTE."
     },
     "quote": {
-        "instructions": """You are in QUOTE context. Your job:
+        "instructions": """=== PRESENT NUMBERS & PUSH TO BOOK ===
 
-CURRENT DATA:
+GOAL: Show them the money, then get them booked.
+
+Available data:
 - Property Value: ${global_data.property_value}
-- Caller Age: ${global_data.caller_age}
-- Estimated Equity: ${global_data.estimated_equity}
-- Quote Presented: ${global_data.quote_presented}
+- Age: ${global_data.caller_age}
+- Mortgage Balance: ${global_data.mortgage_balance}
+- Broker Name: ${global_data.broker_name}
 
-1. **Check if we have the data needed:**
-   - Property Value: ${global_data.property_value}
-   - Age: ${global_data.caller_age}
+=== CALCULATE & PRESENT ===
 
-2. **If any data is missing:**
-   - Ask conversationally: "Can you tell me your property's current value?"
-   - Use update_lead_info to save responses
+1. Calculate immediately:
+   → call calculate_reverse_mortgage(property_value=X, age=Y, mortgage_balance=Z)
 
-3. **ALWAYS use calculate_reverse_mortgage tool:**
-   - NEVER estimate or guess amounts yourself
-   - The tool returns accurate HECM calculations
-   - Present the result naturally using Output Rules for large numbers
+2. Present the result, then add broker personalization:
+   [Present calculation result]
+   "${global_data.broker_name} can get you the exact numbers after your call."
+   
+   If amount is good: "That's a really nice amount to work with!"
+   If amount is modest: "That's solid, and no monthly payments."
 
-4. **Gauge their reaction:**
-   - Are they excited? Skeptical? Need more info?
-   - Use mark_quote_presented to record the quote was shown
+3. Mark it: → call mark_quote_presented()
 
-5. **Transition based on reaction:**
-   - If positive: Offer to book appointment
-   - If skeptical/questions: Route to ANSWER
-   - If concerned: Route to OBJECTIONS
+=== BOOKING INVITE ===
 
-CRITICAL:
-- ALWAYS use calculate_reverse_mortgage - never guess at equity amounts
-- Always frame as "approximately" and "your broker will confirm"
-- Read their reaction and respond empathetically""",
+If ready_to_book=true:
+  "Let me get you scheduled with ${global_data.broker_name}."
+  → Route to BOOK
+
+Otherwise:
+  "Would you like me to check ${global_data.broker_name}'s availability?"
+  
+  - YES: mark_ready_to_book() → BOOK
+  - Questions: → ANSWER
+  - Concerns: → OBJECTIONS
+  - Hard NO: → GOODBYE
+
+SAFE LANGUAGE RULES:
+- Say "estimated", "approximately", "around", "potentially"
+- Always: "${global_data.broker_name} can confirm exact figures"
+- Never guarantee amounts - frame as preliminary""",
         "valid_contexts": ["answer", "book", "goodbye", "objections"],
-        "functions": ["calculate_reverse_mortgage", "mark_quote_presented", "update_lead_info"],
-        "step_criteria": "Complete when you've presented the equity estimate using calculate_reverse_mortgage and called mark_quote_presented"
+        "functions": ["calculate_reverse_mortgage", "mark_quote_presented", "update_lead_info", "mark_ready_to_book"],
+        "step_criteria": "Quote presented with safe language, broker mentioned, booking offered."
     },
     "answer": {
         "instructions": """You are in ANSWER context. Your job is to answer general questions about reverse mortgages.
