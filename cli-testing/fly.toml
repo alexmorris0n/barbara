@@ -1,12 +1,11 @@
 # Barbara CLI Testing Service - Fly.io Configuration
-# Deploy: fly deploy --config cli-testing/fly.toml --dockerfile cli-testing/Dockerfile
+# Deploy from cli-testing folder: cd cli-testing && fly deploy
 
 app = "barbara-cli-testing"
 primary_region = "ord"
 
 [build]
-  # Dockerfile path specified in deploy command
-  # Build context is project root
+  dockerfile = "Dockerfile"
 
 [env]
   PORT = "8080"

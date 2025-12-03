@@ -23,7 +23,7 @@ async function executeCliTest(params) {
   
   // Verify agent file exists
   if (!fs.existsSync(agentPath)) {
-    throw new Error(`Agent file not found: ${agentPath}`);
+    throw new Error(`CLI testing unavailable in simplified deployment. Agent file not found: ${agentPath}`);
   }
   
   console.log('[test-cli] Starting test execution:', {
