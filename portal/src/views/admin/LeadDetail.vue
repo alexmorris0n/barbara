@@ -541,6 +541,19 @@ function openTranscriptModal(interaction) {
 }
 
 function getTranscript(interaction) {
+  // First check for new transcript field (JSONB array from call_log)
+  if (interaction?.transcript && Array.isArray(interaction.transcript)) {
+    // Filter to only show user and assistant messages (not system, tool, system-log)
+    return interaction.transcript.filter(msg => 
+      msg.role === 'user' || msg.role === 'assistant'
+    ).map(msg => ({
+      role: msg.role,
+      content: msg.content,
+      timestamp: msg.timestamp
+    }))
+  }
+  
+  // Fallback to old metadata location
   return interaction?.metadata?.conversation_transcript || null
 }
 

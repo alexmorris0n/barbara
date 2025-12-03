@@ -503,6 +503,9 @@ When booking, offer the next available slot first. If they need a different time
                 # Check if we stored direction
                 direction = state.get("conversation_data", {}).get("call_direction", "inbound")
             
+            # Extract transcript from raw_data (call_log is cleaned, raw_call_log is full)
+            call_log = raw_data.get("call_log", []) if raw_data else []
+            
             # Insert into interactions table
             success = insert_call_summary(
                 phone=phone,
@@ -512,7 +515,8 @@ When booking, offer the next available slot first. If they need a different time
                 duration_seconds=duration,
                 direction=direction,
                 outcome=post_prompt_data.get("outcome", "unknown"),
-                summary_data=post_prompt_data
+                summary_data=post_prompt_data,
+                call_log=call_log
             )
             
             if success:

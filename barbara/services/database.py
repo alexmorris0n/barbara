@@ -485,13 +485,18 @@ def insert_call_summary(
     duration_seconds: int,
     direction: str,
     outcome: str,
-    summary_data: Dict[str, Any]
+    summary_data: Dict[str, Any],
+    call_log: Optional[list] = None
 ) -> bool:
     """
     Insert call summary into interactions table.
     Called from on_summary callback after call ends.
     
     Per SDK Section 6.16.4: Post-prompt data is received after call ends.
+    
+    Args:
+        call_log: The call transcript from SignalWire (array of message objects)
+                  Saved to transcript (JSONB) and transcript_text (human-readable)
     """
     if not supabase:
         logger.warning("[DB] Cannot insert call summary - no Supabase connection")
@@ -537,6 +542,37 @@ def insert_call_summary(
         # If appointment was booked, set scheduled_for
         if summary_data.get("appointment_time"):
             interaction_data["scheduled_for"] = summary_data["appointment_time"]
+        
+        # Save transcript if provided
+        if call_log:
+            # Save full transcript as JSONB
+            interaction_data["transcript"] = call_log
+            
+            # Generate human-readable transcript text
+            transcript_lines = []
+            for msg in call_log:
+                role = msg.get("role", "unknown")
+                content = msg.get("content", "")
+                
+                # Skip system messages and empty content
+                if role in ("system", "system-log") or not content:
+                    continue
+                
+                # Format role for readability
+                if role == "user":
+                    speaker = "Caller"
+                elif role == "assistant":
+                    speaker = "Barbara"
+                elif role == "tool":
+                    # Skip tool results in readable transcript
+                    continue
+                else:
+                    speaker = role.capitalize()
+                
+                transcript_lines.append(f"{speaker}: {content.strip()}")
+            
+            interaction_data["transcript_text"] = "\n".join(transcript_lines)
+            logger.info(f"[DB] 📝 Transcript saved: {len(transcript_lines)} lines")
         
         response = supabase.table("interactions").insert(interaction_data).execute()
         
