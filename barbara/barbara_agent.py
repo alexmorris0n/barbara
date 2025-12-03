@@ -285,6 +285,19 @@ Rules:
             state = get_conversation_state(phone)
             logger.info(f"[BARBARA] Synced lead status: qualified={lead_qualified}, verified={lead_verified}")
         
+        # FIX: Reset stale flags for OUTBOUND calls
+        # wrong_person and greeted should not persist from previous calls
+        if direction == "outbound":
+            update_conversation_state(phone, {
+                'conversation_data': {
+                    'wrong_person': False,
+                    'greeted': False,
+                    'right_person_available': False
+                }
+            })
+            state = get_conversation_state(phone)
+            logger.info(f"[BARBARA] Reset stale flags for outbound call")
+        
         # Per SDK Section 6.16.2: Set global_data for dynamic prompt variables
         # This replaces text-block injection with structured data the AI can reference
         conversation_data = state.get('conversation_data', {}) if state else {}
