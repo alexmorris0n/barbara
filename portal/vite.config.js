@@ -15,9 +15,9 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      // Proxy API requests to FastAPI server
+      // Proxy API requests to barbara-agent FastAPI server
       '/api': {
-        target: 'https://equity-agent-api.fly.dev',
+        target: 'https://barbara-agent.fly.dev',
         changeOrigin: true,
         secure: true
       }
