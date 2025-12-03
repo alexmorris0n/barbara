@@ -170,46 +170,72 @@ app.post('/trigger-call', async (request, reply) => {
       });
     }
     
-    app.log.info({ 
-      to_phone, 
-      lead_id,
-      from_phone: from_phone || SIGNALWIRE_PHONE_NUMBER
-    }, '[trigger-call] Creating outbound call via SignalWire');
-    
-    const auth = Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64');
-    
-    const response = await fetch(`${SIGNALWIRE_SPACE_URL}/api/laml/2010-04-01/Accounts/${SIGNALWIRE_PROJECT_ID}/Calls.json`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Authorization': `Basic ${auth}`
-      },
-      body: new URLSearchParams({
-        To: to_phone,
-        From: from_phone || SIGNALWIRE_PHONE_NUMBER,
-        Url: SWAIG_AGENT_URL,
-        Method: 'POST'
-      })
-    });
-    
-    const result = await response.json();
-    
-    if (!result.sid) {
-      app.log.error({ result }, '[trigger-call] SignalWire call creation failed');
-      return reply.code(500).send({
-        success: false,
-        error: result.message || result.error || 'SignalWire call creation failed'
-      });
+    // Build agent URL with lead_id if provided
+    let agentUrl = SWAIG_AGENT_URL;
+    if (lead_id) {
+      const url = new URL(SWAIG_AGENT_URL);
+      url.searchParams.set('lead_id', lead_id);
+      url.searchParams.set('direction', 'outbound');
+      agentUrl = url.toString();
     }
     
     app.log.info({ 
-      call_sid: result.sid
-    }, '[trigger-call] Call created');
+      to_phone, 
+      lead_id,
+      from_phone: from_phone || SIGNALWIRE_PHONE_NUMBER,
+      agent_url: agentUrl.replace(/:[^:@]+@/, ':***@')  // mask password in logs
+    }, '[trigger-call] Creating outbound call via SignalWire Calling API');
+    
+    const auth = Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64');
+    
+    // Use Calling API (SWML-native) instead of LaML API
+    const response = await fetch(`${SIGNALWIRE_SPACE_URL}/api/calling/calls`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        'Authorization': `Basic ${auth}`
+      },
+      body: JSON.stringify({
+        command: 'dial',
+        params: {
+          url: agentUrl,
+          from: from_phone || SIGNALWIRE_PHONE_NUMBER,
+          to: to_phone,
+          caller_id: from_phone || SIGNALWIRE_PHONE_NUMBER,
+          timeout: 60,
+          max_duration: 3600
+        }
+      })
+    });
+    
+    const responseText = await response.text();
+    let result;
+    try {
+      result = JSON.parse(responseText);
+    } catch (e) {
+      app.log.error({ responseText }, '[trigger-call] Failed to parse response');
+      return reply.code(500).send({
+        success: false,
+        error: `Invalid response from SignalWire: ${responseText}`
+      });
+    }
+    
+    if (!response.ok) {
+      app.log.error({ result, status: response.status }, '[trigger-call] SignalWire call creation failed');
+      return reply.code(500).send({
+        success: false,
+        error: result.message || result.error || `SignalWire API error (${response.status})`
+      });
+    }
+    
+    const callId = result.id || result.call_id || result.sid;
+    app.log.info({ call_id: callId }, '[trigger-call] Call created');
     
     return reply.code(200).send({
       success: true,
-      call_id: result.sid,
-      message: 'Outbound call initiated via SignalWire'
+      call_id: callId,
+      message: 'Outbound call initiated via SignalWire Calling API'
     });
     
   } catch (err) {
