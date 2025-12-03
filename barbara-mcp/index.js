@@ -784,11 +784,10 @@ async function executeTool(name, args) {
               version: '1.0.0',
               sections: {
                 main: [
-                  { sleep: { time: 1200 } },
                   {
                     ai: {
                       params: {
-                        static_greeting: "Hi, this is Barbara calling. One moment please."
+                        static_greeting: "Hi, this is Barbara calling."
                       },
                       SWAIG: {
                         defaults: {},
