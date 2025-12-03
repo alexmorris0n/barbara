@@ -131,31 +131,35 @@ def _fetch_from_nylas(
     appointment_duration: int,
     max_slots: int
 ) -> List[Dict[str, Any]]:
-    """Fetch availability from Nylas API"""
+    """Fetch availability from Nylas API v3"""
     try:
-        # Build request per Nylas docs
+        # Nylas v3 availability endpoint is GLOBAL at /v3/calendars/availability
+        # Participants are specified in the request body with their calendar_ids
         request_body = {
-            "participants": [],  # Empty = just check calendar free/busy
-            "time_range": {
-                "start_time": start_unix,
-                "end_time": end_unix
-            },
-            "interval_minutes": appointment_duration,
-            "availability_rules": {
-                "default_open_hours": [
-                    {
-                        "days": nylas_days,
-                        "start_time": business_start,
-                        "end_time": business_end,
-                        "time_zone": broker_tz_name
-                    }
-                ]
-            }
+            "participants": [
+                {
+                    "email": f"{nylas_grant_id}@calendar",  # Identifier for this participant
+                    "calendar_ids": ["primary"],  # Check primary calendar
+                    "open_hours": [
+                        {
+                            "days": nylas_days,
+                            "start": business_start,
+                            "end": business_end,
+                            "timezone": broker_tz_name
+                        }
+                    ]
+                }
+            ],
+            "start_time": start_unix,
+            "end_time": end_unix,
+            "duration_minutes": appointment_duration,
+            "interval_minutes": appointment_duration
         }
         
         with httpx.Client(timeout=5.0) as client:
+            # Nylas v3: availability is at /v3/calendars/availability (global, not per-grant)
             response = client.post(
-                f"{NYLAS_API_BASE}/grants/{nylas_grant_id}/calendars/availability",
+                f"{NYLAS_API_BASE}/calendars/availability",
                 headers={
                     "Authorization": f"Bearer {NYLAS_API_KEY}",
                     "Content-Type": "application/json"

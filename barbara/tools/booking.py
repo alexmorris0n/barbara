@@ -146,6 +146,7 @@ def handle_booking(phone: str, preferred_time: str, notes: str = None) -> SwaigF
         )
     
     nylas_grant_id = broker['nylas_grant_id']
+    nylas_calendar_id = broker.get('nylas_calendar_id') or 'primary'  # Use specific calendar or default to primary
     broker_name = broker.get('contact_name', 'Broker')
     broker_tz = broker.get('timezone', 'America/Los_Angeles')
     duration = broker.get('appointment_duration_minutes', 30)
@@ -167,17 +168,23 @@ def handle_booking(phone: str, preferred_time: str, notes: str = None) -> SwaigF
     appointment_dt = datetime.fromtimestamp(start_unix, tz=tz)
     friendly_time = appointment_dt.strftime("%A, %B %d at %-I:%M %p")
     
-    # Create Nylas event with Unix timestamps
+    # Create Nylas v3 event - requires timezone in 'when' object
+    lead_name = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip() or "Client"
+    lead_email = lead.get('primary_email', '')
+    
     event_data = {
-        "title": f"Reverse Mortgage Consultation - {lead.get('first_name', 'Client')}",
+        "title": f"Reverse Mortgage Consultation - {lead_name}",
         "description": f"Reverse mortgage consultation call.\n\nLead Phone: {phone}\nNotes: {notes or 'None'}",
+        "busy": True,
         "when": {
             "start_time": start_unix,
             "end_time": end_unix,
+            "start_timezone": broker_tz,
+            "end_timezone": broker_tz
         },
         "participants": [
-            {"email": lead.get('primary_email', '')},
-        ]
+            {"name": lead_name, "email": lead_email}
+        ] if lead_email else []
     }
     
     # Call Nylas API
@@ -207,10 +214,10 @@ def handle_booking(phone: str, preferred_time: str, notes: str = None) -> SwaigF
         )
     
     try:
-        # Use sync client
+        # Use sync client - Nylas v3 US region API
         with httpx.Client(timeout=10.0) as client:
             response = client.post(
-                f"https://api.nylas.com/v3/grants/{nylas_grant_id}/events",
+                f"https://api.us.nylas.com/v3/grants/{nylas_grant_id}/events?calendar_id={nylas_calendar_id}",
                 headers={
                     "Authorization": f"Bearer {NYLAS_API_KEY}",
                     "Content-Type": "application/json"
@@ -218,7 +225,7 @@ def handle_booking(phone: str, preferred_time: str, notes: str = None) -> SwaigF
                 json=event_data
             )
         
-        if response.status_code == 200:
+        if response.status_code in (200, 201):  # 201 = Created
             event = response.json()
             event_id = event.get('data', {}).get('id', 'unknown')
             
@@ -247,13 +254,15 @@ def handle_booking(phone: str, preferred_time: str, notes: str = None) -> SwaigF
                 })
             )
         else:
-            logger.error(f"[BOOKING] Nylas API error: {response.status_code}")
+            # Log full error details for debugging
+            error_body = response.text[:500] if response.text else "No response body"
+            logger.error(f"[BOOKING] Nylas API error: {response.status_code} - {error_body}")
             
             # Set manual booking required flag (sync)
             update_conversation_state(phone, {
                 "conversation_data": {
                     "manual_booking_required": True,
-                    "booking_error": f"Nylas API error: {response.status_code}"
+                    "booking_error": f"Nylas API error: {response.status_code} - {error_body}"
                 }
             })
             
