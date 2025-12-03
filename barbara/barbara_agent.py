@@ -448,17 +448,13 @@ When booking, offer the next available slot first. If they need a different time
         voice_string = models.get("tts_voice_string", "elevenlabs.rachel")
         
         # Per Section 3.20.3: function_fillers are spoken while tools execute
-        # CRITICAL: Must be passed to add_language(), not just in @tool decorators
+        # REMOVED global fillers - they play on EVERY tool call including fast flag-setters
+        # Fillers are now only on slow tools: calculate, search_knowledge, book_appointment
         self.add_language(
             name="English",
             code="en-US",
             voice=voice_string,
-            function_fillers=[
-                "One moment please...",
-                "Let me check on that...",
-                "Bear with me...",
-                "Just a moment..."
-            ]
+            function_fillers=[]  # No global fillers - per-tool only
         )
         
         # NOTE: Contexts are built in __init__ (per Section 6.8), NOT here.
@@ -493,10 +489,45 @@ When booking, offer the next available slot first. If they need a different time
             
             # Get call metadata
             call_id = raw_data.get("call_id", "") if raw_data else ""
-            caller_num = raw_data.get("caller_id_num", "") if raw_data else ""
             duration = raw_data.get("call_duration", 0) if raw_data else 0
             
+            # Extract phone number - location depends on call direction
+            # For OUTBOUND: device.params.to_number (the lead we called)
+            # For INBOUND: caller_id_num or device.params.from_number
+            caller_num = ""
+            if raw_data:
+                # Check nested device.params first (actual SignalWire structure)
+                device_params = raw_data.get("params", {}).get("device", {}).get("params", {})
+                direction = raw_data.get("params", {}).get("direction", "")
+                
+                if direction == "outbound":
+                    # Outbound: lead's phone is in to_number
+                    caller_num = device_params.get("to_number", "")
+                else:
+                    # Inbound: lead's phone is in from_number or caller_id_num
+                    caller_num = (
+                        device_params.get("from_number") or
+                        raw_data.get("caller_id_num") or
+                        ""
+                    )
+                
+                # Fallback to top-level keys if nested didn't work
+                if not caller_num:
+                    caller_num = (
+                        raw_data.get("caller_id_num") or 
+                        raw_data.get("from") or
+                        raw_data.get("to") or
+                        raw_data.get("conversation_id") or
+                        ""
+                    )
+            
             phone = normalize_phone(caller_num)
+            
+            # Log what we found for debugging
+            if not phone:
+                logger.warning(f"[BARBARA] ⚠️ Could not find phone. Keys: {list(raw_data.keys()) if raw_data else []}")
+                if raw_data and raw_data.get("params"):
+                    logger.warning(f"[BARBARA] ⚠️ params keys: {list(raw_data.get('params', {}).keys())}")
             
             logger.info(f"[BARBARA] 📝 Post-prompt received for {phone}")
             logger.info(f"[BARBARA]   Call ID: {call_id}")

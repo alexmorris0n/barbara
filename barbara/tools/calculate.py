@@ -89,6 +89,7 @@ def handle_calculate(phone: str, property_value: int, age: int, mortgage_balance
     
     # Step 1: Apply HECM lending limit (can't borrow against value above limit)
     max_claim_amount = min(property_value, HECM_LENDING_LIMIT)
+    is_over_hecm_limit = property_value > HECM_LENDING_LIMIT
     
     # Step 2: Get Principal Limit Factor based on age
     plf = get_plf(age)
@@ -96,8 +97,9 @@ def handle_calculate(phone: str, property_value: int, age: int, mortgage_balance
     # Step 3: Calculate gross principal limit
     gross_principal_limit = int(max_claim_amount * plf)
     
-    # Step 4: Subtract estimated closing costs
-    estimated_closing_costs = int(property_value * ESTIMATED_CLOSING_COST_PERCENT)
+    # Step 4: Subtract estimated closing costs (based on max_claim_amount, NOT full property value)
+    # FIX: Closing costs apply to the HECM amount, not the home value
+    estimated_closing_costs = int(max_claim_amount * ESTIMATED_CLOSING_COST_PERCENT)
     
     # Step 5: Subtract existing mortgage payoff (MANDATORY - must pay off existing mortgage)
     # Step 6: Calculate net available to borrower
@@ -117,11 +119,29 @@ def handle_calculate(phone: str, property_value: int, age: int, mortgage_balance
     
     # Build response with safe/disclaimer language
     if net_available <= 0:
-        response = (
-            f"Based on an estimated home value of ${property_value:,} and mortgage balance of ${mortgage_balance:,}, "
-            f"there may not be enough equity available after closing costs. "
-            f"Your specialist can review all the options with you."
-        )
+        # Check if this is a high-value home that exceeds HECM limits
+        # These leads are EXCELLENT candidates for jumbo reverse mortgages
+        if is_over_hecm_limit and actual_equity > 200000:
+            response = (
+                f"Great news! With a home value of ${property_value:,} and ${actual_equity:,} in equity, "
+                f"you're actually an excellent candidate for a jumbo reverse mortgage. "
+                f"The standard government HECM program has a ${HECM_LENDING_LIMIT:,} limit, "
+                f"but there are jumbo options for higher-value homes like yours that can access much more. "
+                f"Your specialist will have better numbers for you based on those programs."
+            )
+        elif mortgage_balance > gross_principal_limit:
+            # High mortgage relative to principal limit
+            response = (
+                f"Based on your home value of ${property_value:,}, the reverse mortgage would first need to pay off "
+                f"your ${mortgage_balance:,} existing mortgage. With the current rates and lending limits, "
+                f"your specialist can review whether a jumbo product or other options might work better for your situation."
+            )
+        else:
+            response = (
+                f"Based on an estimated home value of ${property_value:,} and mortgage balance of ${mortgage_balance:,}, "
+                f"the standard program may be limited. Your specialist can review all available options with you, "
+                f"including jumbo programs that may offer more flexibility."
+            )
     else:
         response = f"Based on an estimated home value of ${property_value:,}"
         if mortgage_balance > 0:
@@ -131,6 +151,12 @@ def handle_calculate(phone: str, property_value: int, age: int, mortgage_balance
             f"or roughly ${monthly_tenure:,} per month. "
             f"These are preliminary estimates only - actual amounts depend on current interest rates and a full application review."
         )
+        # Add note about jumbo options for high-value homes
+        if is_over_hecm_limit:
+            response += (
+                f" And since your home exceeds the standard ${HECM_LENDING_LIMIT:,} limit, "
+                f"there may be jumbo options that could offer even more."
+            )
     
     # Update conversation state (sync)
     update_conversation_state(phone, {
@@ -147,7 +173,7 @@ def handle_calculate(phone: str, property_value: int, age: int, mortgage_balance
     
     logger.info(f"[CALCULATE] HECM calc for {phone}: value=${property_value:,}, age={age}, "
                 f"mortgage=${mortgage_balance:,}, PLF={plf:.3f}, gross=${gross_principal_limit:,}, "
-                f"net=${net_available:,}")
+                f"net=${net_available:,}, over_hecm_limit={is_over_hecm_limit}, equity=${actual_equity:,}")
     
     # Per Section 4.21: Use add_action for metadata
     return (
