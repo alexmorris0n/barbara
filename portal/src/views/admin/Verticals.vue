@@ -1194,19 +1194,42 @@
                             />
                             <span>Select all</span>
                           </label>
-                          <label
-                            v-for="tool in filteredTools(node)"
-                            :key="tool"
-                            class="dropdown-option"
-                            @click.stop
-                          >
-                            <input
-                              type="checkbox"
-                            :value="tool"
-                            v-model="nodeContent[node].tools"
-                            />
-                            <span>{{ tool }}</span>
-                          </label>
+                          
+                          <!-- Flow Tools Section -->
+                          <div v-if="filteredFlowTools(node).length > 0" class="tools-section">
+                            <div class="tools-section-header">Flow Tools</div>
+                            <label
+                              v-for="tool in filteredFlowTools(node)"
+                              :key="tool"
+                              class="dropdown-option flow-tool"
+                              @click.stop
+                            >
+                              <input
+                                type="checkbox"
+                                :value="tool"
+                                v-model="nodeContent[node].tools"
+                              />
+                              <span>{{ tool }}</span>
+                            </label>
+                          </div>
+                          
+                          <!-- Optional Tools Section -->
+                          <div v-if="filteredOptionalTools(node).length > 0" class="tools-section">
+                            <div class="tools-section-header">Optional Tools</div>
+                            <label
+                              v-for="tool in filteredOptionalTools(node)"
+                              :key="tool"
+                              class="dropdown-option"
+                              @click.stop
+                            >
+                              <input
+                                type="checkbox"
+                                :value="tool"
+                                v-model="nodeContent[node].tools"
+                              />
+                              <span>{{ tool }}</span>
+                            </label>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -5389,14 +5412,29 @@ function toggleDropdown(node) {
   }
 }
 
-// Filter tools based on search
-function filteredTools(node) {
+// Filter FLOW tools (baseline tools that control conversation flow)
+function filteredFlowTools(node) {
   const search = toolSearch.value[node] || ''
-  const baseFilter = availableTools.filter(t => !NON_EDITABLE_TOOLS.includes(t))
-  if (!search) return baseFilter
-  return baseFilter.filter(tool => 
+  const flowTools = BASELINE_FLOW_TOOLS.filter(t => availableTools.includes(t) || BASELINE_FLOW_TOOLS.includes(t))
+  if (!search) return flowTools
+  return flowTools.filter(tool => 
     tool.toLowerCase().includes(search.toLowerCase())
   )
+}
+
+// Filter OPTIONAL tools (everything except flow tools)
+function filteredOptionalTools(node) {
+  const search = toolSearch.value[node] || ''
+  const optionalTools = availableTools.filter(t => !BASELINE_FLOW_TOOLS.includes(t) && t !== 'get_lead_context')
+  if (!search) return optionalTools
+  return optionalTools.filter(tool => 
+    tool.toLowerCase().includes(search.toLowerCase())
+  )
+}
+
+// Legacy - keep for compatibility
+function filteredTools(node) {
+  return [...filteredFlowTools(node), ...filteredOptionalTools(node)]
 }
 
 // Check if a tool is selected
@@ -5414,11 +5452,12 @@ function isToolSelected(node, tool) {
   return tools.includes(tool)
 }
 
-// Count selected discretionary tools (exclude baseline flow tools)
+// Count ALL selected tools (flow + optional)
 function getSelectedDisplayCount(node) {
   const tools = nodeContent.value[node]?.tools
   if (!Array.isArray(tools)) return 0
-  return tools.filter(t => !NON_EDITABLE_TOOLS.includes(t) && availableTools.includes(t)).length
+  const allAvailable = [...BASELINE_FLOW_TOOLS, ...availableTools]
+  return tools.filter(t => allAvailable.includes(t)).length
 }
 
 // Check if all tools are selected
@@ -7432,6 +7471,35 @@ onUnmounted(() => {
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   margin-bottom: 0.25rem;
   font-weight: 500;
+}
+
+/* Tools Section Headers */
+.tools-section {
+  margin-top: 0.25rem;
+}
+
+.tools-section-header {
+  padding: 0.5rem 0.75rem 0.25rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.5);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-top: 0.25rem;
+}
+
+.tools-section:first-of-type .tools-section-header {
+  border-top: none;
+  margin-top: 0;
+}
+
+.dropdown-option.flow-tool {
+  background: rgba(138, 43, 226, 0.08);
+}
+
+.dropdown-option.flow-tool:hover {
+  background: rgba(138, 43, 226, 0.15);
 }
 
 .dropdown-option input[type="checkbox"] {
