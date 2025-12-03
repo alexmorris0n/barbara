@@ -69,6 +69,11 @@ const router = createRouter({
           name: 'TestyControl',
           component: () => import('@/views/admin/TestyControl.vue'),
           meta: { requiresAdmin: true }
+        },
+        {
+          path: 'profile',
+          name: 'UserProfile',
+          component: () => import('@/views/admin/UserProfile.vue')
         }
       ]
     },

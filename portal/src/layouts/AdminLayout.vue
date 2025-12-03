@@ -94,7 +94,8 @@ import {
   BriefcaseOutline,
   CalendarOutline,
   LayersOutline,
-  FlaskOutline
+  FlaskOutline,
+  PersonOutline
 } from '@vicons/ionicons5'
 import barbaraLogoDark from '@/assets/barbara-logo-dark.svg'
 import barbaraLogoCompactDark from '@/assets/barbara-logo-compact-dark.svg'
@@ -171,6 +172,12 @@ const allMenuOptions = [
     icon: () => h(NIcon, { size: 18 }, { default: () => h(FlaskOutline) }),
     to: '/testy-control',
     adminOnly: true
+  },
+  {
+    key: 'profile',
+    label: 'Profile',
+    icon: () => h(NIcon, { size: 18 }, { default: () => h(PersonOutline) }),
+    to: '/profile'
   }
 ]
 
@@ -191,7 +198,8 @@ const routeKeyMap = {
   Analytics: 'analytics',
   Appointments: 'appointments',
   Verticals: 'verticals',
-  TestyControl: 'testy-control'
+  TestyControl: 'testy-control',
+  UserProfile: 'profile'
 }
 
 const activeKey = computed(() => routeKeyMap[route.name] || 'dashboard')
@@ -204,7 +212,8 @@ const pageTitle = computed(() => {
     analytics: 'Analytics',
     appointments: 'Appointments',
     verticals: 'Verticals',
-    'testy-control': 'Testy Control'
+    'testy-control': 'Testy Control',
+    profile: 'Profile'
   }
   return titles[activeKey.value] ?? 'Workspace'
 })
