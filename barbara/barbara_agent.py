@@ -453,9 +453,14 @@ When booking, offer the next available slot first. If they need a different time
         # Configure AI models from database
         # Per Section 3.21 (AI Parameters)
         # All LLM params (temperature, top_p, frequency_penalty, presence_penalty) loaded from agent_params table
-        # Build debug webhook URL from callback path
+        # Build debug webhook URL - always try to build it
         # Per SDK Section 23689: debug_webhook_level 2 sends full transcripts and tool calls
-        debug_webhook_url = self.get_full_url("/debug-log") if callback_path else None
+        try:
+            debug_webhook_url = self.get_full_url("/debug-log")
+            logger.info(f"[BARBARA] Debug webhook URL: {debug_webhook_url}")
+        except Exception as e:
+            logger.warning(f"[BARBARA] Could not build debug webhook URL: {e}")
+            debug_webhook_url = None
         
         self.set_params({
             "ai_model": models.get("llm_model", "gpt-4.1-mini"),
