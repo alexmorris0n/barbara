@@ -182,7 +182,7 @@ def handle_update_lead_info(
     if estimated_equity is not None:
         updates['estimated_equity'] = estimated_equity
     if mortgage_balance is not None:
-        updates['current_balance'] = mortgage_balance  # DB column name
+        updates['mortgage_balance'] = mortgage_balance
     
     if not updates:
         return SwaigFunctionResult(

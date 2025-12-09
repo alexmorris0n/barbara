@@ -277,7 +277,13 @@ Otherwise:
 SAFE LANGUAGE RULES:
 - Say "estimated", "approximately", "around", "potentially"
 - Always: "${global_data.broker_name} can confirm exact figures"
-- Never guarantee amounts - frame as preliminary""",
+- Never guarantee amounts - frame as preliminary
+
+=== CRITICAL BOOKING RULES ===
+⚠️ NEVER say "appointment is set/booked/scheduled" - you CANNOT book in QUOTE context!
+⚠️ You MUST route to BOOK context to schedule appointments.
+⚠️ To book: call mark_ready_to_book() → Route to BOOK → let BOOK context handle it.
+⚠️ If you say "booked" without routing to BOOK, the appointment will NOT exist!""",
         "valid_contexts": ["answer", "book", "goodbye", "objections"],
         "functions": ["calculate_reverse_mortgage", "mark_quote_presented", "update_lead_info", "mark_ready_to_book"],
         "step_criteria": "Quote presented with safe language, broker mentioned, booking offered."
@@ -391,10 +397,14 @@ CURRENT STATUS:
 5. **Mark as booked:**
    - The book_appointment function handles marking appointment_booked=True
 
-CRITICAL:
-- Always mention broker by name (builds trust)
-- Confirm all details clearly
-- Set clear expectations for what happens next""",
+=== CRITICAL: ACTUAL BOOKING REQUIRED ===
+⚠️ You MUST call book_appointment(phone, preferred_time) to create a real calendar event.
+⚠️ NEVER say "your appointment is set/booked/confirmed" until book_appointment returns success.
+⚠️ The broker will NOT know about the appointment unless book_appointment is called.
+⚠️ If the tool fails, tell the caller and offer to have someone call them.
+
+CORRECT: "Let me book that for you now..." → call book_appointment → "Perfect, you're all set!"
+WRONG: "Your appointment is set!" (without calling book_appointment)""",
         "valid_contexts": ["goodbye", "answer", "objections", "quote"],
         "functions": ["check_broker_availability", "book_appointment"],
         "step_criteria": "Appointment booked or declined"

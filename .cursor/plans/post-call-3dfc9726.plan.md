@@ -1,4 +1,30 @@
-<!-- 3dfc9726-2db2-4ac4-ab20-5441a102ee19 1cfd8b00-88c3-4ff1-a9c4-6518a5eba734 -->
+---
+name: Post-Call Data Collection (Debug Webhook)
+overview: ""
+todos:
+  - id: 664edb12-bd81-4c80-8b66-e96611f57581
+    content: Add debug_webhook_url and debug_webhook_level to set_params()
+    status: completed
+  - id: 7a6fa4ef-6e63-49c6-991d-186ed62a695d
+    content: Create /debug-log endpoint using agent.get_app()
+    status: completed
+  - id: 244fb18d-51d8-4c97-984f-8542e92fa748
+    content: Create /recording-status endpoint for recording webhook
+    status: pending
+  - id: be419531-e4c8-48d9-bf94-38d6aa5226ad
+    content: Add record_call post-answer verb with status_url
+    status: pending
+  - id: cd4379c4-f4f3-450a-80d9-a44e18b3547b
+    content: Add insert_call_debug_log() to database.py
+    status: completed
+  - id: c104db61-2d7e-43ee-847c-7ee3d05aa3c2
+    content: Create migration for call_debug_logs table
+    status: completed
+  - id: 4cee2c95-eddc-4628-8e78-3a3cc1edd751
+    content: Test call to verify debug webhook payload structure
+    status: completed
+---
+
 # Post-Call Data Collection (Debug Webhook)
 
 ## Summary
@@ -94,13 +120,3 @@ Make a test call, check logs to see what data actually comes through, then adjus
 - `debug_webhook_level`: Line 23690 (0-2, higher = more verbose)
 - `get_full_url()`: Line 17308-17315
 - `get_app()`: Line 17358
-
-### To-dos
-
-- [x] Add debug_webhook_url and debug_webhook_level to set_params()
-- [x] Create /debug-log endpoint using agent.get_app()
-- [ ] Create /recording-status endpoint for recording webhook
-- [ ] Add record_call post-answer verb with status_url
-- [x] Add insert_call_debug_log() to database.py
-- [x] Create migration for call_debug_logs table
-- [x] Test call to verify debug webhook payload structure

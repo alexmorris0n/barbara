@@ -33,6 +33,7 @@ from services.database import (
     get_pronunciations,
     normalize_phone,
     insert_call_summary,
+    insert_call_debug_log,
 )
 # build_context_injection replaced by set_global_data per SDK Section 6.16
 from services.fallbacks import get_fallback_node_config
@@ -452,6 +453,10 @@ When booking, offer the next available slot first. If they need a different time
         # Configure AI models from database
         # Per Section 3.21 (AI Parameters)
         # All LLM params (temperature, top_p, frequency_penalty, presence_penalty) loaded from agent_params table
+        # Build debug webhook URL from callback path
+        # Per SDK Section 23689: debug_webhook_level 2 sends full transcripts and tool calls
+        debug_webhook_url = self.get_full_url("/debug-log") if callback_path else None
+        
         self.set_params({
             "ai_model": models.get("llm_model", "gpt-4.1-mini"),
             "openai_asr_engine": models.get("stt_model", "deepgram:nova-3"),
@@ -468,6 +473,9 @@ When booking, offer the next available slot first. If they need a different time
             "conversation_id": phone,
             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
             "local_tz": "America/Los_Angeles",
+            # Debug webhook for capturing full transcripts and tool calls
+            "debug_webhook_url": debug_webhook_url,
+            "debug_webhook_level": 2,  # Level 2 = full verbosity (transcripts, tool calls, etc.)
         })
         
         # Configure voice
@@ -505,6 +513,9 @@ When booking, offer the next available slot first. If they need a different time
         Called after call ends with structured data from set_post_prompt.
         
         Writes call summary to Supabase interactions table.
+        
+        NOTE: This callback may be triggered multiple times during a call (e.g., on context switches).
+        We only save to DB when we have actual post_prompt_data with an outcome.
         """
         if not summary and not raw_data:
             logger.warning("[BARBARA] on_summary called with no data")
@@ -520,6 +531,12 @@ When booking, offer the next available slot first. If they need a different time
                 # Handle parsed JSON if available
                 if isinstance(post_prompt_data, dict) and "parsed" in post_prompt_data:
                     post_prompt_data = post_prompt_data["parsed"]
+            
+            # CRITICAL: Only save to DB if we have actual post_prompt_data with content
+            # The callback can be triggered multiple times with empty data during context switches
+            if not post_prompt_data or not post_prompt_data.get("outcome"):
+                logger.info(f"[BARBARA] on_summary called without outcome - skipping DB insert (context switch?)")
+                return
             
             # Get call metadata
             call_id = raw_data.get("call_id", "") if raw_data else ""
@@ -1271,4 +1288,45 @@ When booking, offer the next available slot first. If they need a different time
 # Entry point
 if __name__ == "__main__":
     agent = BarbaraAgent()
+    
+    # Add custom debug webhook endpoint
+    # Per SDK Section 23689: debug_webhook_url receives debug data
+    from fastapi import Request
+    
+    app = agent.get_app()
+    
+    @app.post("/debug-log")
+    async def debug_log_endpoint(request: Request):
+        """
+        Receives debug webhook data from SignalWire.
+        Logs transcripts, tool calls, context switches at level 2.
+        """
+        try:
+            data = await request.json()
+            call_id = data.get("call_id", "")
+            event_type = data.get("event_type") or data.get("type", "unknown")
+            
+            # Try to find lead_id from the data
+            lead_id = None
+            if data.get("caller_id_num"):
+                phone = normalize_phone(data.get("caller_id_num", ""))
+                if phone:
+                    lead = get_lead_by_phone(phone)
+                    lead_id = lead.get("id") if lead else None
+            
+            # Save to database
+            insert_call_debug_log(
+                call_id=call_id,
+                event_type=event_type,
+                event_data=data,
+                lead_id=lead_id
+            )
+            
+            logger.info(f"[DEBUG-LOG] Received {event_type} for call {call_id}")
+            return {"status": "ok"}
+            
+        except Exception as e:
+            logger.error(f"[DEBUG-LOG] Error processing debug data: {e}")
+            return {"status": "error", "message": str(e)}
+    
     agent.run()

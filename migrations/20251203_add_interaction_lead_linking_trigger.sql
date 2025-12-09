@@ -40,3 +40,4 @@ CREATE TRIGGER trg_link_interaction_to_lead
 
 COMMENT ON FUNCTION link_interaction_to_lead() IS 'Auto-links interactions to leads based on phone number in metadata';
 
+

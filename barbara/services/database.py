@@ -64,7 +64,7 @@ def get_lead_by_phone(phone: str) -> Optional[Dict[str, Any]]:
     
     try:
         response = supabase.table('leads')\
-            .select('*, brokers!assigned_broker_id(id, contact_name, company_name, phone, nmls_number, nylas_grant_id, timezone, business_hours_start, business_hours_end, business_days, appointment_duration_minutes, buffer_between_appointments_minutes, minimum_booking_lead_time_minutes)')\
+            .select('*, brokers!assigned_broker_id(id, contact_name, company_name, phone, email, nmls_number, nylas_grant_id, timezone, business_hours_start, business_hours_end, business_days, appointment_duration_minutes, buffer_between_appointments_minutes, minimum_booking_lead_time_minutes)')\
             .or_(f'primary_phone.ilike.%{normalized}%,primary_phone_e164.eq.{e164_format}')\
             .limit(1)\
             .execute()
@@ -91,7 +91,7 @@ def get_lead_by_id(lead_id: str) -> Optional[Dict[str, Any]]:
     
     try:
         response = supabase.table('leads')\
-            .select('*, brokers!assigned_broker_id(id, contact_name, company_name, phone, nmls_number, nylas_grant_id, timezone, business_hours_start, business_hours_end, business_days, appointment_duration_minutes, buffer_between_appointments_minutes, minimum_booking_lead_time_minutes)')\
+            .select('*, brokers!assigned_broker_id(id, contact_name, company_name, phone, email, nmls_number, nylas_grant_id, timezone, business_hours_start, business_hours_end, business_days, appointment_duration_minutes, buffer_between_appointments_minutes, minimum_booking_lead_time_minutes)')\
             .eq('id', lead_id)\
             .limit(1)\
             .execute()

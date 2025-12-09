@@ -63,3 +63,4 @@ WHERE i.lead_id = l.id
 
 COMMENT ON FUNCTION link_interaction_to_lead() IS 'Auto-links interactions to leads based on phone number in metadata, and sets broker_id from lead';
 
+

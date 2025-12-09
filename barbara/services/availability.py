@@ -105,7 +105,10 @@ def fetch_broker_availability(
             return slots
         logger.warning("[AVAILABILITY] Nylas returned no slots, falling back to generated")
     else:
-        logger.info("[AVAILABILITY] Nylas not configured, using generated slots")
+        if not nylas_grant_id:
+            logger.warning("[AVAILABILITY] Broker nylas_grant_id missing - using generated slots")
+        else:
+            logger.info("[AVAILABILITY] Nylas not configured (missing API key), using generated slots")
     
     # Fallback: Generate slots from business hours
     return _generate_slots(
@@ -131,35 +134,20 @@ def _fetch_from_nylas(
     appointment_duration: int,
     max_slots: int
 ) -> List[Dict[str, Any]]:
-    """Fetch availability from Nylas API v3"""
+    """Fetch free/busy from Nylas API v3 using grant-specific endpoint"""
     try:
-        # Nylas v3 availability endpoint is GLOBAL at /v3/calendars/availability
-        # Participants are specified in the request body with their calendar_ids
+        # Nylas v3 free-busy endpoint: /v3/grants/{grant_id}/calendars/free-busy
+        # This is more reliable than the global availability endpoint because it uses
+        # grant_id directly in the URL, not requiring email matching
         request_body = {
-            "participants": [
-                {
-                    "email": f"{nylas_grant_id}@calendar",  # Identifier for this participant
-                    "calendar_ids": ["primary"],  # Check primary calendar
-                    "open_hours": [
-                        {
-                            "days": nylas_days,
-                            "start": business_start,
-                            "end": business_end,
-                            "timezone": broker_tz_name
-                        }
-                    ]
-                }
-            ],
             "start_time": start_unix,
             "end_time": end_unix,
-            "duration_minutes": appointment_duration,
-            "interval_minutes": appointment_duration
         }
         
         with httpx.Client(timeout=5.0) as client:
-            # Nylas v3: availability is at /v3/calendars/availability (global, not per-grant)
+            # Grant-specific free-busy endpoint - uses grant_id in URL path
             response = client.post(
-                f"{NYLAS_API_BASE}/calendars/availability",
+                f"{NYLAS_API_BASE}/grants/{nylas_grant_id}/calendars/free-busy",
                 headers={
                     "Authorization": f"Bearer {NYLAS_API_KEY}",
                     "Content-Type": "application/json"
@@ -172,31 +160,115 @@ def _fetch_from_nylas(
             return []
         
         data = response.json()
-        time_slots = data.get('time_slots', [])
         
+        # Free-busy returns busy periods in data[].time_slots[]
+        # We need to extract busy times and filter them from generated slots
+        busy_periods = []
+        for calendar_data in data.get('data', []):
+            for busy_slot in calendar_data.get('time_slots', []):
+                busy_start = busy_slot.get('start_time')
+                busy_end = busy_slot.get('end_time')
+                if busy_start and busy_end:
+                    busy_periods.append((busy_start, busy_end))
+        
+        logger.info(f"[AVAILABILITY] Nylas returned {len(busy_periods)} busy periods")
+        
+        # Generate all possible slots from business hours
         broker_tz = pytz.timezone(broker_tz_name)
-        slots = []
+        start_dt = datetime.fromtimestamp(start_unix, tz=broker_tz)
         
-        for slot in time_slots[:max_slots]:
-            start_ts = slot.get('start_time')
-            if not start_ts:
-                continue
-            
-            # Convert Unix timestamp to datetime
-            slot_dt = datetime.fromtimestamp(start_ts, tz=broker_tz)
-            
-            slots.append({
-                "start": slot_dt.isoformat(),
-                "start_unix": start_ts,
-                "display": _format_slot_display(slot_dt)
-            })
+        all_slots = _generate_business_hour_slots(
+            broker_tz=broker_tz,
+            start_dt=start_dt,
+            end_unix=end_unix,
+            business_start=business_start,
+            business_end=business_end,
+            nylas_days=nylas_days,
+            appointment_duration=appointment_duration,
+            max_slots=max_slots * 3  # Generate more, we'll filter
+        )
         
-        logger.info(f"[AVAILABILITY] Fetched {len(slots)} slots from Nylas")
-        return slots
+        # Filter out slots that overlap with busy periods
+        available_slots = []
+        for slot in all_slots:
+            slot_start = slot['start_unix']
+            slot_end = slot_start + (appointment_duration * 60)
+            
+            is_busy = False
+            for busy_start, busy_end in busy_periods:
+                # Check if slot overlaps with busy period
+                if slot_start < busy_end and slot_end > busy_start:
+                    is_busy = True
+                    break
+            
+            if not is_busy:
+                available_slots.append(slot)
+                if len(available_slots) >= max_slots:
+                    break
+        
+        logger.info(f"[AVAILABILITY] {len(available_slots)} slots available after filtering busy times")
+        return available_slots
         
     except Exception as e:
         logger.error(f"[AVAILABILITY] Nylas fetch failed: {e}")
         return []
+
+
+def _generate_business_hour_slots(
+    broker_tz: Any,
+    start_dt: datetime,
+    end_unix: int,
+    business_start: str,
+    business_end: str,
+    nylas_days: List[int],
+    appointment_duration: int,
+    max_slots: int
+) -> List[Dict[str, Any]]:
+    """Generate slots from business hours using Nylas day format (0=Sunday, 1=Monday, etc.)"""
+    slots = []
+    
+    # Parse business hours
+    start_hour, start_min = map(int, business_start.split(':'))
+    end_hour, end_min = map(int, business_end.split(':'))
+    
+    # Convert Python weekday (0=Monday) to Nylas weekday (0=Sunday)
+    # Python: Monday=0, Tuesday=1, ..., Sunday=6
+    # Nylas:  Sunday=0, Monday=1, ..., Saturday=6
+    
+    current_date = start_dt.date()
+    end_date = datetime.fromtimestamp(end_unix, tz=broker_tz).date()
+    
+    while current_date <= end_date and len(slots) < max_slots:
+        # Convert Python weekday to Nylas format
+        python_weekday = current_date.weekday()  # 0=Monday
+        nylas_weekday = (python_weekday + 1) % 7  # Convert to 0=Sunday
+        
+        if nylas_weekday not in nylas_days:
+            current_date += timedelta(days=1)
+            continue
+        
+        # Generate slots for this day
+        slot_time = broker_tz.localize(
+            datetime.combine(current_date, datetime.min.time().replace(hour=start_hour, minute=start_min))
+        )
+        day_end = broker_tz.localize(
+            datetime.combine(current_date, datetime.min.time().replace(hour=end_hour, minute=end_min))
+        )
+        
+        while slot_time < day_end and len(slots) < max_slots:
+            # Skip if slot is before our start time
+            if slot_time >= start_dt:
+                slots.append({
+                    "start": slot_time.isoformat(),
+                    "start_unix": int(slot_time.timestamp()),
+                    "display": _format_slot_display(slot_time)
+                })
+            
+            slot_time += timedelta(minutes=appointment_duration)
+        
+        current_date += timedelta(days=1)
+    
+    return slots
 
 
 def _generate_slots(
