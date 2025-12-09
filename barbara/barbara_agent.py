@@ -90,9 +90,16 @@ class BarbaraAgent(AgentBase):
         
         Per Section 6.8: Contexts must be defined in __init__, NOT in on_swml_request.
         """
+        # Per Section 11980: Call Recording
+        # record_call=True enables automatic recording
+        # record_stereo=True puts caller on left channel, agent on right (better for transcription)
+        # Disclosure handled in GREET: "calling on a recorded line"
         super().__init__(
             name="barbara",
-            route="/agent/barbara"
+            route="/agent/barbara",
+            record_call=True,
+            record_stereo=True,
+            record_format="wav"
         )
         
         # Base prompt section (required even with contexts per Section 6.8)
