@@ -401,12 +401,13 @@ export default {
           if (insertError) throw insertError
         }
 
-        // Reset lead verification and status
+        // Reset lead verification, status, AND qualified flag
         if (this.state?.lead_id) {
           const { error: leadError } = await this.supabase
             .from('leads')
             .update({
               status: 'new',
+              qualified: false,
               verified: false,
               phone_verified: false,
               email_verified: false,
@@ -682,6 +683,7 @@ export default {
             .from('leads')
             .update({ 
               status: config.lead_status,
+              qualified: config.qualified ?? false,
               verified: config.verified,
               phone_verified: config.verified,
               email_verified: config.verified,

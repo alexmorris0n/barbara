@@ -29,8 +29,9 @@ else:
 
 def normalize_phone(phone: str) -> str:
     """
-    Normalize phone number to 10-digit US format.
+    Normalize phone number to E.164 format: +1XXXXXXXXXX
     Handles: +16505300051, 16505300051, 6505300051, (650) 530-0051
+    Returns consistent format to avoid duplicate records in conversation_state.
     """
     if not phone:
         return ""
@@ -41,6 +42,10 @@ def normalize_phone(phone: str) -> str:
     # If 11 digits starting with 1, strip the country code
     if len(digits) == 11 and digits.startswith('1'):
         digits = digits[1:]
+    
+    # Return E.164 format with +1 prefix for consistency
+    if len(digits) == 10:
+        return f"+1{digits}"
     
     return digits
 
