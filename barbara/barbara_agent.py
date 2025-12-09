@@ -245,6 +245,16 @@ Rules:
         
         logger.info(f"[BARBARA] Call direction: {direction}, phone: {caller_num} (normalized: {phone})")
         
+        # CRITICAL: Store call_direction in conversation_state so it persists to on_summary
+        # This fixes the bug where outbound calls were being logged as "inbound"
+        if phone and phone != "unknown":
+            update_conversation_state(phone, {
+                'conversation_data': {
+                    'call_direction': direction
+                }
+            })
+            logger.info(f"[BARBARA] Stored call_direction='{direction}' in conversation_state")
+        
         # PRE-ANSWER: Ringback tone for INBOUND only
         # Per SDK 1.0.4: Use add_pre_answer_verb with auto_answer=False
         # For OUTBOUND: No ringback - person already answered their phone
