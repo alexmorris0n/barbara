@@ -622,9 +622,17 @@ When booking, offer the next available slot first. If they need a different time
                     context.set_isolated(True)
                     logger.info(f"[BARBARA] Context '{node_name}' set to isolated (fresh history)")
                 
-                # Enter/exit fillers will be used when we implement task #5
-                # enter_fillers = context_config.get('enter_fillers', [])
-                # exit_fillers = context_config.get('exit_fillers', [])
+                # Per Section 11444: Enter/exit fillers for smooth transitions
+                enter_fillers = context_config.get('enter_fillers', [])
+                exit_fillers = context_config.get('exit_fillers', [])
+                
+                if enter_fillers:
+                    context.add_enter_filler("en-US", enter_fillers)
+                    logger.info(f"[BARBARA] Context '{node_name}' has {len(enter_fillers)} enter fillers")
+                
+                if exit_fillers:
+                    context.add_exit_filler("en-US", exit_fillers)
+                    logger.info(f"[BARBARA] Context '{node_name}' has {len(exit_fillers)} exit fillers")
             
             # Add single step per context (Barbara's nodes are single-step)
             # Per Section 6.9 (Step Configuration)

@@ -1319,6 +1319,35 @@
                     </div>
                   </div>
                   
+                  <div class="editor-field">
+                    <label>Transition Fillers</label>
+                    <p class="field-hint">Phrases spoken when entering/exiting this context (random selection)</p>
+                    
+                    <div class="fillers-section">
+                      <div class="filler-group">
+                        <span class="filler-label">Enter:</span>
+                        <div class="filler-list">
+                          <div v-for="(filler, idx) in (contextConfigs[node]?.enter_fillers || [])" :key="'enter-'+idx" class="filler-item">
+                            <input type="text" :value="filler" @input="updateEnterFiller(node, idx, $event.target.value)" placeholder="e.g. Let me check that..." />
+                            <button @click="removeEnterFiller(node, idx)" class="btn-remove-filler">×</button>
+                          </div>
+                          <button @click="addEnterFiller(node)" class="btn-add-filler">+ Add Enter Filler</button>
+                        </div>
+                      </div>
+                      
+                      <div class="filler-group">
+                        <span class="filler-label">Exit:</span>
+                        <div class="filler-list">
+                          <div v-for="(filler, idx) in (contextConfigs[node]?.exit_fillers || [])" :key="'exit-'+idx" class="filler-item">
+                            <input type="text" :value="filler" @input="updateExitFiller(node, idx, $event.target.value)" placeholder="e.g. Going back to..." />
+                            <button @click="removeExitFiller(node, idx)" class="btn-remove-filler">×</button>
+                          </div>
+                          <button @click="addExitFiller(node)" class="btn-add-filler">+ Add Exit Filler</button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
                   <div class="node-actions">
                     <!-- Individual save button removed - use "Save All" at top -->
                     <button class="btn-preview" @click="showPreview(node)">
@@ -5554,6 +5583,67 @@ async function loadContextConfigs() {
   }
 }
 
+// Filler management functions
+function ensureContextConfig(node) {
+  if (!contextConfigs.value[node]) {
+    contextConfigs.value[node] = { isolated: false, enter_fillers: [], exit_fillers: [] }
+  }
+}
+
+function addEnterFiller(node) {
+  ensureContextConfig(node)
+  if (!contextConfigs.value[node].enter_fillers) {
+    contextConfigs.value[node].enter_fillers = []
+  }
+  contextConfigs.value[node].enter_fillers.push('')
+  contextConfigHasChanges.value[node] = true
+  markNodeChanged(node)
+}
+
+function removeEnterFiller(node, idx) {
+  if (!contextConfigs.value[node]?.enter_fillers) return
+  contextConfigs.value[node].enter_fillers.splice(idx, 1)
+  contextConfigHasChanges.value[node] = true
+  markNodeChanged(node)
+}
+
+function updateEnterFiller(node, idx, value) {
+  ensureContextConfig(node)
+  if (!contextConfigs.value[node].enter_fillers) {
+    contextConfigs.value[node].enter_fillers = []
+  }
+  contextConfigs.value[node].enter_fillers[idx] = value
+  contextConfigHasChanges.value[node] = true
+  markNodeChanged(node)
+}
+
+function addExitFiller(node) {
+  ensureContextConfig(node)
+  if (!contextConfigs.value[node].exit_fillers) {
+    contextConfigs.value[node].exit_fillers = []
+  }
+  contextConfigs.value[node].exit_fillers.push('')
+  contextConfigHasChanges.value[node] = true
+  markNodeChanged(node)
+}
+
+function removeExitFiller(node, idx) {
+  if (!contextConfigs.value[node]?.exit_fillers) return
+  contextConfigs.value[node].exit_fillers.splice(idx, 1)
+  contextConfigHasChanges.value[node] = true
+  markNodeChanged(node)
+}
+
+function updateExitFiller(node, idx, value) {
+  ensureContextConfig(node)
+  if (!contextConfigs.value[node].exit_fillers) {
+    contextConfigs.value[node].exit_fillers = []
+  }
+  contextConfigs.value[node].exit_fillers[idx] = value
+  contextConfigHasChanges.value[node] = true
+  markNodeChanged(node)
+}
+
 // Set dropdown wrapper ref (simplified - don't update position here)
 function setDropdownWrapperRef(node, el) {
   // Just store the ref, don't update position here to avoid loops
@@ -8490,6 +8580,90 @@ onUnmounted(() => {
 .btn-add-pron:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* Context Fillers */
+.fillers-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+.filler-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.filler-label {
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.85rem;
+}
+
+.filler-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.filler-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.filler-item input {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 0.9rem;
+}
+
+.btn-remove-filler {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: rgba(220, 53, 69, 0.2);
+  border: 1px solid rgba(220, 53, 69, 0.4);
+  border-radius: 4px;
+  color: #dc3545;
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.btn-remove-filler:hover {
+  background: rgba(220, 53, 69, 0.4);
+}
+
+.btn-add-filler {
+  padding: 0.4rem 0.75rem;
+  background: rgba(75, 0, 130, 0.2);
+  border: 1px solid rgba(138, 43, 226, 0.3);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: fit-content;
+}
+
+.btn-add-filler:hover {
+  background: rgba(75, 0, 130, 0.4);
+}
+
+.field-hint {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 0.8rem;
+  margin: 0.25rem 0 0.5rem 0;
 }
 
 .section-label {
