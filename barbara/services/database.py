@@ -289,6 +289,36 @@ def get_node_config(node_name: str, vertical: str = "reverse_mortgage") -> Optio
         return get_fallback_node_config(node_name)
 
 
+def get_context_config(context_name: str, vertical: str = "reverse_mortgage") -> Optional[Dict[str, Any]]:
+    """
+    Get context-level configuration from contexts_config table.
+    Returns dict with: isolated, enter_fillers, exit_fillers
+    
+    Per SDK Section 6.10: Context configuration for isolation and fillers
+    """
+    if not supabase:
+        return None
+    
+    try:
+        response = supabase.table('contexts_config')\
+            .select('isolated, enter_fillers, exit_fillers')\
+            .eq('context_name', context_name)\
+            .eq('vertical', vertical)\
+            .limit(1)\
+            .execute()
+        
+        if response.data:
+            config = response.data[0]
+            logger.info(f"[DB] Loaded context config for '{context_name}': isolated={config.get('isolated')}")
+            return config
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"[DB] Error fetching context config: {e}")
+        return None
+
+
 def get_theme_prompt(vertical: str = "reverse_mortgage") -> Optional[str]:
     """Get theme prompt (universal personality)"""
     if not supabase:

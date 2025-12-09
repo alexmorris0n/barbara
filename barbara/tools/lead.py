@@ -140,7 +140,8 @@ def handle_update_lead_info(
     property_zip: str = None,
     age: int = None,
     property_value: float = None,
-    estimated_equity: float = None
+    estimated_equity: float = None,
+    mortgage_balance: float = None
 ) -> SwaigFunctionResult:
     """Update lead information in the database"""
     phone = normalize_phone(phone)
@@ -180,6 +181,8 @@ def handle_update_lead_info(
         updates['estimated_property_value'] = property_value  # Alias
     if estimated_equity is not None:
         updates['estimated_equity'] = estimated_equity
+    if mortgage_balance is not None:
+        updates['current_balance'] = mortgage_balance  # DB column name
     
     if not updates:
         return SwaigFunctionResult(
@@ -211,6 +214,8 @@ def handle_update_lead_info(
                     updated_fields.append(f"property value to ${property_value:,.0f}")
                 if estimated_equity:
                     updated_fields.append(f"equity to ${estimated_equity:,.0f}")
+                if mortgage_balance is not None:
+                    updated_fields.append(f"mortgage balance to ${mortgage_balance:,.0f}")
                 
                 summary = ", ".join(updated_fields) if updated_fields else "your information"
                 
@@ -237,6 +242,8 @@ def handle_update_lead_info(
                     global_updates["property_value"] = property_value
                 if estimated_equity is not None:
                     global_updates["estimated_equity"] = estimated_equity
+                if mortgage_balance is not None:
+                    global_updates["mortgage_balance"] = mortgage_balance
                 
                 return (
                     SwaigFunctionResult(

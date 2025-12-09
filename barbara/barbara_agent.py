@@ -28,6 +28,7 @@ from services.database import (
     update_conversation_state,
     get_theme_prompt,
     get_node_config,
+    get_context_config,
     get_active_signalwire_models,
     get_pronunciations,
     normalize_phone,
@@ -337,6 +338,7 @@ Rules:
             "property_zip": lead.get('property_zip', '') if lead else '',
             "property_value": lead.get('property_value', 0) if lead else 0,
             "estimated_equity": lead.get('estimated_equity', 0) if lead else 0,
+            "mortgage_balance": lead.get('current_balance', 0) if lead else 0,  # DB column: current_balance
             
             # Verification status (from leads table)
             "phone_verified": lead.get('phone_verified', False) if lead else False,
@@ -391,6 +393,7 @@ Rules:
 Address: ${global_data.property_address}
 City: ${global_data.property_city}, ${global_data.property_state} ${global_data.property_zip}
 Estimated Value: ${global_data.property_value}
+Mortgage Balance: ${global_data.mortgage_balance}
 Estimated Equity: ${global_data.estimated_equity}
 Age: ${global_data.caller_age}
 
@@ -610,6 +613,18 @@ When booking, offer the next available slot first. If they need a different time
             # Create context
             # Per Section 6.10 (Context Configuration)
             context = contexts.add_context(node_name)
+            
+            # Load context-level config from DB (isolation, fillers)
+            # Per Section 6.10.1: Isolated contexts truncate conversation history
+            context_config = get_context_config(node_name, "reverse_mortgage")
+            if context_config:
+                if context_config.get('isolated'):
+                    context.set_isolated(True)
+                    logger.info(f"[BARBARA] Context '{node_name}' set to isolated (fresh history)")
+                
+                # Enter/exit fillers will be used when we implement task #5
+                # enter_fillers = context_config.get('enter_fillers', [])
+                # exit_fillers = context_config.get('exit_fillers', [])
             
             # Add single step per context (Barbara's nodes are single-step)
             # Per Section 6.9 (Step Configuration)
@@ -1134,6 +1149,10 @@ When booking, offer the next available slot first. If they need a different time
                 "estimated_equity": {
                     "type": "number",
                     "description": "Estimated equity (property value minus mortgage)"
+                },
+                "mortgage_balance": {
+                    "type": "number",
+                    "description": "Current mortgage balance (0 if paid off)"
                 }
             }
         }
@@ -1150,7 +1169,8 @@ When booking, offer the next available slot first. If they need a different time
             property_zip=args.get("property_zip"),
             age=args.get("age"),
             property_value=args.get("property_value"),
-            estimated_equity=args.get("estimated_equity")
+            estimated_equity=args.get("estimated_equity"),
+            mortgage_balance=args.get("mortgage_balance")
         )
     
     # ----- TRANSFER TOOL -----

@@ -1304,17 +1304,17 @@
                   </div>
                   
                   <div class="editor-field">
-                    <label>Skip User Turn</label>
+                    <label>Context Isolation</label>
                     <div style="display: inline-flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; width: fit-content;">
                       <input
                         type="checkbox"
-                        :id="`skip-user-turn-${node}`"
-                        :checked="nodeContent[node]?.skip_user_turn || false"
-                        @change="(e) => { updateSkipUserTurn(node, e.target.checked); }"
+                        :id="`isolated-${node}`"
+                        :checked="contextConfigs[node]?.isolated || false"
+                        @change="(e) => { updateContextIsolated(node, e.target.checked); }"
                         style="width: auto; flex-shrink: 0;"
                       />
-                      <label :for="`skip-user-turn-${node}`" style="margin: 0; font-weight: normal; cursor: pointer; white-space: nowrap;">
-                        Execute tools immediately without waiting for user?
+                      <label :for="`isolated-${node}`" style="margin: 0; font-weight: normal; cursor: pointer; white-space: nowrap;">
+                        Fresh conversation history when entering this context
                       </label>
                     </div>
                   </div>
@@ -2344,6 +2344,11 @@ const nodeContent = ref({})
 const nodeHasChanges = ref({})
 const expandedNodes = ref({})
 const nodePrompts = ref({})
+
+// Context config state (from contexts_config table)
+// Stores: { nodeName: { isolated: bool, enter_fillers: [], exit_fillers: [] } }
+const contextConfigs = ref({})
+const contextConfigHasChanges = ref({})
 
 // Computed function to check if tool is selected (for reactivity)
 function getToolCheckedState(node, tool) {
@@ -4909,6 +4914,11 @@ async function saveNode(nodeName) {
       }
     }
     
+    // Save context config (isolation, fillers) if changed
+    if (contextConfigHasChanges.value[nodeName]) {
+      await saveContextConfig(nodeName)
+    }
+    
     nodeHasChanges.value[nodeName] = false
     window.$message?.success(`Node "${nodeName}" saved as draft!`)
     
@@ -5454,6 +5464,94 @@ function updateSkipUserTurn(node, value) {
   }
   nodeContent.value[node].skip_user_turn = value
   markNodeChanged(node)
+}
+
+// Update context isolation setting (saved to contexts_config table on Save)
+function updateContextIsolated(node, value) {
+  if (!contextConfigs.value[node]) {
+    contextConfigs.value[node] = { isolated: false, enter_fillers: [], exit_fillers: [] }
+  }
+  contextConfigs.value[node].isolated = value
+  contextConfigHasChanges.value[node] = true
+  // Mark node as changed so Save button becomes active
+  markNodeChanged(node)
+}
+
+// Save context config to database
+async function saveContextConfig(node) {
+  const config = contextConfigs.value[node]
+  if (!config || !contextConfigHasChanges.value[node]) return
+  
+  try {
+    const { data: existing, error: fetchError } = await supabase
+      .from('contexts_config')
+      .select('id')
+      .eq('context_name', node)
+      .eq('vertical', selectedVertical.value)
+      .maybeSingle()
+    
+    if (fetchError && fetchError.code !== 'PGRST116') throw fetchError
+    
+    if (existing) {
+      // Update existing record
+      const { error: updateError } = await supabase
+        .from('contexts_config')
+        .update({ 
+          isolated: config.isolated, 
+          enter_fillers: config.enter_fillers || [],
+          exit_fillers: config.exit_fillers || [],
+          updated_at: new Date().toISOString() 
+        })
+        .eq('id', existing.id)
+      if (updateError) throw updateError
+    } else {
+      // Insert new record
+      const { error: insertError } = await supabase
+        .from('contexts_config')
+        .insert({
+          vertical: selectedVertical.value,
+          context_name: node,
+          isolated: config.isolated,
+          enter_fillers: config.enter_fillers || [],
+          exit_fillers: config.exit_fillers || []
+        })
+      if (insertError) throw insertError
+    }
+    
+    contextConfigHasChanges.value[node] = false
+    console.log(`Context config saved for ${node}`)
+  } catch (err) {
+    console.error('Error saving context config:', err)
+    throw err
+  }
+}
+
+// Load context configs from contexts_config table
+async function loadContextConfigs() {
+  if (!selectedVertical.value) return
+  
+  try {
+    const { data, error } = await supabase
+      .from('contexts_config')
+      .select('context_name, isolated, enter_fillers, exit_fillers')
+      .eq('vertical', selectedVertical.value)
+    
+    if (error) throw error
+    
+    // Map to contextConfigs ref
+    const configs = {}
+    for (const row of (data || [])) {
+      configs[row.context_name] = {
+        isolated: row.isolated || false,
+        enter_fillers: row.enter_fillers || [],
+        exit_fillers: row.exit_fillers || []
+      }
+    }
+    contextConfigs.value = configs
+    console.log('Loaded context configs:', configs)
+  } catch (err) {
+    console.error('Error loading context configs:', err)
+  }
 }
 
 // Set dropdown wrapper ref (simplified - don't update position here)
@@ -6275,6 +6373,7 @@ async function onVerticalChange() {
   initNodeContent()
   await loadTheme()
   await loadNodePrompts()
+  await loadContextConfigs()
   await checkForDraft()
   
   // Don't auto-expand any nodes - leave them all closed
