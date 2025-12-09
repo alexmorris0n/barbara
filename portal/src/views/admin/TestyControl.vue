@@ -398,7 +398,7 @@ export default {
           if (insertError) throw insertError
         }
 
-        // Reset lead verification, status, AND qualified flag
+        // Reset lead verification, status, AND all qualification flags
         if (this.state?.lead_id) {
           const { error: leadError } = await this.supabase
             .from('leads')
@@ -409,6 +409,11 @@ export default {
               phone_verified: false,
               email_verified: false,
               address_verified: false,
+              // Also reset individual qualification criteria
+              age_qualified: false,
+              homeowner_qualified: false,
+              primary_residence_qualified: false,
+              equity_qualified: false,
               updated_at: new Date().toISOString()
             })
             .eq('id', this.state.lead_id)
