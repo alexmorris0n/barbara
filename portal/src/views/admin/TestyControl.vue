@@ -202,7 +202,8 @@
 </template>
 
 <script>
-import { createClient } from '@supabase/supabase-js'
+// Use shared Supabase client with user session (required for RLS)
+import { supabase } from '@/lib/supabase'
 
 const TESTY_PHONE = '+16505300051'
 
@@ -215,7 +216,7 @@ export default {
       callingTesty: false,
       message: '',
       messageType: 'success',
-      supabase: null
+      supabase: supabase  // Use shared client with auth session
     }
   },
   computed: {
@@ -239,10 +240,6 @@ export default {
     }
   },
   mounted() {
-    this.supabase = createClient(
-      import.meta.env.VITE_SUPABASE_URL,
-      import.meta.env.VITE_SUPABASE_ANON_KEY
-    )
     this.loadState()
   },
   methods: {
