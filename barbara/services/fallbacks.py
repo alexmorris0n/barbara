@@ -208,8 +208,8 @@ FIRST LINE (always say this when entering):
 - ALWAYS ask home value even if we have it (data may be stale)
 
 === CRITICAL: QUALIFICATION MARKERS REQUIRED ===
-⚠️ You MUST call these tools - they update the database!
-⚠️ Without these calls, the lead will NOT show as qualified in the system.
+You MUST call these tools - they update the database!
+Without these calls, the lead will NOT show as qualified in the system.
 
 REQUIRED CALLS:
 1. After confirming age 62+: mark_age_qualified()
@@ -372,10 +372,10 @@ CURRENT STATUS:
    - The book_appointment function handles marking appointment_booked=True
 
 === CRITICAL: ACTUAL BOOKING REQUIRED ===
-⚠️ You MUST call book_appointment(phone, preferred_time) to create a real calendar event.
-⚠️ NEVER say "your appointment is set/booked/confirmed" until book_appointment returns success.
-⚠️ The broker will NOT know about the appointment unless book_appointment is called.
-⚠️ If the tool fails, tell the caller and offer to have someone call them.
+You MUST call book_appointment(phone, preferred_time) to create a real calendar event.
+NEVER say "your appointment is set/booked/confirmed" until book_appointment returns success.
+The broker will NOT know about the appointment unless book_appointment is called.
+If the tool fails, tell the caller and offer to have someone call them.
 
 CORRECT: "Let me book that for you now..." → call book_appointment → "Perfect, you're all set!"
 WRONG: "Your appointment is set!" (without calling book_appointment)""",
