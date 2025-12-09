@@ -29,6 +29,7 @@ from services.database import (
     get_theme_prompt,
     get_node_config,
     get_active_signalwire_models,
+    get_pronunciations,
     normalize_phone,
     insert_call_summary,
 )
@@ -456,6 +457,13 @@ When booking, offer the next available slot first. If they need a different time
             voice=voice_string,
             function_fillers=[]  # No global fillers - per-tool only
         )
+        
+        # Per Section 3.20.6: Pronunciation rules fix TTS mispronunciations
+        # Load from theme_prompts.config.pronunciations (editable in Vue portal)
+        pronunciations = get_pronunciations("reverse_mortgage")
+        if pronunciations:
+            self.set_pronunciations(pronunciations)
+            logger.info(f"[BARBARA] Applied {len(pronunciations)} pronunciation rules")
         
         # NOTE: Contexts are built in __init__ (per Section 6.8), NOT here.
         # on_swml_request is for dynamic prompts and params only.

@@ -339,6 +339,44 @@ def get_theme_prompt(vertical: str = "reverse_mortgage") -> Optional[str]:
         return get_fallback_theme()
 
 
+def get_pronunciations(vertical: str = "reverse_mortgage") -> list:
+    """
+    Get TTS pronunciation rules from theme_prompts.config
+    Returns list of dicts: [{"replace": "HECM", "with": "heck-em"}, ...]
+    
+    Per SDK Section 3.20.6: Pronunciation rules fix TTS mispronunciations
+    """
+    if not supabase:
+        # Fallback pronunciations for reverse mortgage industry terms
+        return [
+            {"replace": "HECM", "with": "heck-em"},
+            {"replace": "HUD", "with": "H U D"},
+            {"replace": "FHA", "with": "F H A"},
+        ]
+    
+    try:
+        response = supabase.table('theme_prompts')\
+            .select('config')\
+            .eq('vertical', vertical)\
+            .eq('is_active', True)\
+            .limit(1)\
+            .execute()
+        
+        if response.data and response.data[0].get('config'):
+            config = response.data[0]['config']
+            pronunciations = config.get('pronunciations', [])
+            if pronunciations:
+                logger.info(f"[DB] ✅ Loaded {len(pronunciations)} pronunciation rules")
+                return pronunciations
+        
+        logger.info(f"[DB] No pronunciation rules found for vertical: {vertical}")
+        return []
+        
+    except Exception as e:
+        logger.error(f"[DB] Error fetching pronunciations: {e}")
+        return []
+
+
 def get_active_signalwire_models(vertical: str = 'reverse_mortgage', language: str = 'en-US') -> Dict[str, Any]:
     """
     Get active SignalWire models and behavior params from database

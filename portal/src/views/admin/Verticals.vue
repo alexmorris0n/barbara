@@ -188,6 +188,74 @@
                   ></textarea>
                 </div>
               </div>
+
+              <!-- Section 6: Pronunciations (TTS Rules) -->
+              <div class="theme-section" :class="{ active: selectedThemeSection === 'pronunciations' }">
+                <div class="theme-section-header" @click="toggleThemeSection('pronunciations')">
+                  <span class="section-label">
+                    Pronunciations
+                    <span class="tooltip-indicator" title="TTS pronunciation rules for acronyms and industry terms. Maps words to phonetic spellings.">*</span>
+                  </span>
+                  <span class="section-toggle">{{ expandedThemeSections.pronunciations ? '−' : '+' }}</span>
+                </div>
+                <div v-if="expandedThemeSections.pronunciations" class="theme-section-content">
+                  <p class="section-description">Define how the TTS engine should pronounce specific words (e.g., "HECM" → "heck-em").</p>
+                  
+                  <!-- Existing pronunciations -->
+                  <div class="pronunciations-list">
+                    <div 
+                      v-for="(pron, index) in config.pronunciations" 
+                      :key="index" 
+                      class="pronunciation-item"
+                    >
+                      <input 
+                        type="text" 
+                        v-model="pron.replace" 
+                        placeholder="Word (e.g., HECM)"
+                        class="pron-input pron-replace"
+                        @input="themeHasChanges = true"
+                      />
+                      <span class="pron-arrow">→</span>
+                      <input 
+                        type="text" 
+                        v-model="pron.with" 
+                        placeholder="Say as (e.g., heck-em)"
+                        class="pron-input pron-with"
+                        @input="themeHasChanges = true"
+                      />
+                      <button 
+                        class="btn-remove-pron" 
+                        @click="removePronunciation(index)"
+                        title="Remove"
+                      >×</button>
+                    </div>
+                  </div>
+                  
+                  <!-- Add new pronunciation -->
+                  <div class="add-pronunciation">
+                    <input 
+                      type="text" 
+                      v-model="newPronunciation.replace" 
+                      placeholder="Word to replace"
+                      class="pron-input pron-replace"
+                      @keyup.enter="addPronunciation"
+                    />
+                    <span class="pron-arrow">→</span>
+                    <input 
+                      type="text" 
+                      v-model="newPronunciation.with" 
+                      placeholder="Phonetic spelling"
+                      class="pron-input pron-with"
+                      @keyup.enter="addPronunciation"
+                    />
+                    <button 
+                      class="btn-add-pron" 
+                      @click="addPronunciation"
+                      :disabled="!newPronunciation.replace || !newPronunciation.with"
+                    >+ Add</button>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div class="editor-actions">
@@ -1644,11 +1712,49 @@ const expandedThemeSections = ref({
   output_rules: false,
   conversational_flow: false,
   tools: false,
-  guardrails: false
+  guardrails: false,
+  pronunciations: false
 })
 
 // Track last selected theme section (stays highlighted even when collapsed)
 const selectedThemeSection = ref(null)
+
+// New pronunciation input state
+const newPronunciation = ref({ replace: '', with: '' })
+
+// Add a new pronunciation rule
+function addPronunciation() {
+  if (!newPronunciation.value.replace || !newPronunciation.value.with) return
+  
+  // Initialize array if needed
+  if (!config.value.pronunciations) {
+    config.value.pronunciations = []
+  }
+  
+  // Check for duplicate
+  const exists = config.value.pronunciations.some(
+    p => p.replace.toLowerCase() === newPronunciation.value.replace.toLowerCase()
+  )
+  if (exists) {
+    window.$message?.warning('This word already has a pronunciation rule')
+    return
+  }
+  
+  config.value.pronunciations.push({
+    replace: newPronunciation.value.replace,
+    with: newPronunciation.value.with
+  })
+  
+  // Reset input
+  newPronunciation.value = { replace: '', with: '' }
+  themeHasChanges.value = true
+}
+
+// Remove a pronunciation rule
+function removePronunciation(index) {
+  config.value.pronunciations.splice(index, 1)
+  themeHasChanges.value = true
+}
 
 // Toggle theme section expansion
 function toggleThemeSection(section) {
@@ -1817,7 +1923,8 @@ const config = ref({
   eos_timeout_ms: 800,
   record_call: true,
   telephony: { auto_answer: false, ring_delay_ms: 4000 },
-  safety: { blocked_phrases: [], max_tool_depth: 2 }
+  safety: { blocked_phrases: [], max_tool_depth: 2 },
+  pronunciations: [] // TTS pronunciation rules: [{replace: "HECM", with: "heck-em"}]
 })
 
 // Platform switcher state
@@ -8194,6 +8301,92 @@ onUnmounted(() => {
 
 .theme-section-content {
   padding: 0 1rem 1rem 1rem;
+}
+
+/* Pronunciations Section */
+.section-description {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.85rem;
+  margin-bottom: 1rem;
+}
+
+.pronunciations-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.pronunciation-item,
+.add-pronunciation {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.pron-input {
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 0.9rem;
+}
+
+.pron-replace {
+  width: 140px;
+  font-family: 'Consolas', monospace;
+}
+
+.pron-with {
+  flex: 1;
+  min-width: 160px;
+}
+
+.pron-arrow {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 1.1rem;
+}
+
+.btn-remove-pron {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: rgba(220, 53, 69, 0.2);
+  border: 1px solid rgba(220, 53, 69, 0.4);
+  border-radius: 4px;
+  color: #dc3545;
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.btn-remove-pron:hover {
+  background: rgba(220, 53, 69, 0.4);
+}
+
+.btn-add-pron {
+  padding: 0.5rem 1rem;
+  background: rgba(75, 0, 130, 0.3);
+  border: 1px solid rgba(138, 43, 226, 0.4);
+  border-radius: 4px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.btn-add-pron:hover:not(:disabled) {
+  background: rgba(75, 0, 130, 0.5);
+}
+
+.btn-add-pron:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
 .section-label {
