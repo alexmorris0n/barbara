@@ -104,6 +104,11 @@ class BarbaraAgent(AgentBase):
         # Provides: calculate - Evaluate mathematical expressions
         self.add_skill("math")
         
+        # Add datetime skill per Section 5.18
+        # Provides: get_current_datetime - AI can know what day/time it is for booking
+        # Critical for interpreting "tomorrow", "next Tuesday", etc.
+        self.add_skill("datetime")
+        
         # Per Section 3.22: Speech hints improve recognition for domain-specific vocabulary
         # Critical for financial terms seniors may use
         self.add_hints([

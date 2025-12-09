@@ -1752,6 +1752,10 @@ function addPronunciation() {
 
 // Remove a pronunciation rule
 function removePronunciation(index) {
+  // Defensive check - ensure array exists
+  if (!config.value.pronunciations || !Array.isArray(config.value.pronunciations)) {
+    return
+  }
   config.value.pronunciations.splice(index, 1)
   themeHasChanges.value = true
 }
