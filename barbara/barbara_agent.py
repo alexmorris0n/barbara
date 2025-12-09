@@ -453,15 +453,6 @@ When booking, offer the next available slot first. If they need a different time
         # Configure AI models from database
         # Per Section 3.21 (AI Parameters)
         # All LLM params (temperature, top_p, frequency_penalty, presence_penalty) loaded from agent_params table
-        # Build debug webhook URL - always try to build it
-        # Per SDK Section 23689: debug_webhook_level 2 sends full transcripts and tool calls
-        try:
-            debug_webhook_url = self.get_full_url("/debug-log")
-            logger.info(f"[BARBARA] Debug webhook URL: {debug_webhook_url}")
-        except Exception as e:
-            logger.warning(f"[BARBARA] Could not build debug webhook URL: {e}")
-            debug_webhook_url = None
-        
         self.set_params({
             "ai_model": models.get("llm_model", "gpt-4.1-mini"),
             "openai_asr_engine": models.get("stt_model", "deepgram:nova-3"),
@@ -478,9 +469,8 @@ When booking, offer the next available slot first. If they need a different time
             "conversation_id": phone,
             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
             "local_tz": "America/Los_Angeles",
-            # Debug webhook for capturing full transcripts and tool calls
-            "debug_webhook_url": debug_webhook_url,
-            "debug_webhook_level": 2,  # Level 2 = full verbosity (transcripts, tool calls, etc.)
+            # NOTE: debug_webhook_url removed - was causing SWML generation to fail
+            # TODO: Implement properly by building URL manually (get_full_url doesn't take path param)
         })
         
         # Configure voice
