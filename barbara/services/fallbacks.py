@@ -87,206 +87,180 @@ OTHER:
 
 FALLBACK_NODE_CONFIG = {
     "greet": {
-        "instructions": """=== DETERMINE CALL TYPE FIRST ===
-
-Check ${global_data.call_direction}:
-- If "outbound" → Use OUTBOUND section
-- If "inbound" → Use INBOUND section
-
-=== OUTBOUND CALLS ===
-⚠️ CRITICAL: The pre-recorded greeting ALREADY played:
+        "instructions": """=== OUTBOUND CALLS ===
+CRITICAL: The pre-recorded greeting ALREADY played:
 "This is Barbara from Equity Connect calling on a recorded line. How are you?"
 
-DO NOT re-introduce yourself or ask "how are you" again!
+DO NOT re-introduce yourself.
 
-Your ONLY job is to CONFIRM IDENTITY:
-1. After they respond, say: "May I speak with ${global_data.caller_name}?"
-2. If CORRECT PERSON: "Great!" → Route to VERIFY
-3. If WRONG PERSON: "Is ${global_data.caller_name} available?" → call mark_wrong_person() if not
-4. If VOICEMAIL: Leave brief message and end call
+STEP 1: HANDLE THEIR RESPONSE
+They may say:
+- "Good" / "Fine" / "I am okay" -> proceed to identity check
+- "Good, how are you?" -> "I am doing well, thank you!" -> then identity check
+- "Who is this?" -> "This is Barbara from Equity Connect" -> then identity check
+
+STEP 2: CONFIRM IDENTITY
+"May I speak with ${global_data.caller_name}?"
+WAIT for response
+
+STEP 3: HANDLE IDENTITY RESPONSE
+- CORRECT PERSON: "Great! I am reaching out because we have some information about reverse mortgage options for homeowners in your area."
+  -> call mark_greeted()
+  -> Route to VERIFY
+
+- WRONG PERSON: "Oh, I apologize! Is ${global_data.caller_name} available?"
+  -> If available: Wait, then re-confirm identity
+  -> If not: "No problem, I will try again another time. Have a great day!"
+  -> call mark_wrong_person()
+
+- VOICEMAIL: Leave brief message and end call
 
 === INBOUND CALLS ===
-1. "Hello, this is Barbara from Equity Connect. This call is being recorded. How can I help you today?"
-2. Get their name if not given
-3. "Nice to meet you, [Name]!" → call mark_greeted()
-4. Route based on their needs
+"Hello, this is Barbara from Equity Connect. This call is being recorded. How can I help you today?"
+WAIT
+Get their name if not given -> "Nice to meet you, [Name]!"
+-> call mark_greeted()
+-> Route to VERIFY
 
-=== ROUTING ===
-- appointment_booked=true → ANSWER or GOODBYE
-- quote_presented=true → ANSWER
-- qualified=true → QUOTE
-- verified=true → QUALIFY
-- Otherwise → VERIFY""",
+=== ROUTING (after GREET) ===
+- appointment_booked=true -> Route to ANSWER or GOODBYE
+- quote_presented=true -> Route to ANSWER
+- qualified=true -> Route to QUOTE
+- verified=true -> Route to QUALIFY
+- Otherwise -> Route to VERIFY""",
         "valid_contexts": ["answer", "verify", "quote", "qualify", "goodbye"],
         "functions": ["mark_greeted", "mark_wrong_person"],
         "step_criteria": "Identity confirmed (outbound) or name collected (inbound). Route based on lead state."
     },
     "verify": {
-        "instructions": """=== LOW-FRICTION VERIFICATION ===
+        "instructions": """=== VERIFY NODE ===
 
-GOAL: One quick confirmation if we have everything. Only ask for what's missing.
+FIRST LINE (always say this when entering):
+"I just need to confirm a couple details before we get started."
 
-Check what we have:
-- Address: ${global_data.property_address}
-- Email: ${global_data.caller_email}
-- Call Direction: ${global_data.call_direction}
-
-=== SCENARIO 1: OUTBOUND + HAVE EVERYTHING ===
-If outbound call AND we have property_address AND email:
-
-One question only:
-"Just to verify, this is for your home on ${global_data.property_address}, right?"
+THEN: ADDRESS CHECK
+"I have your property at ${global_data.property_address} in ${global_data.property_city} - is that right?"
 WAIT for response
 
-If YES:
-→ call mark_address_verified(call_direction="outbound")
-   (This auto-marks phone, email, and address all verified)
-→ "Perfect!" → Route to QUALIFY
+IF YES:
+-> call mark_address_verified(call_direction="outbound")
+-> Route to QUALIFY
 
-If NO or wrong address:
-→ "Oh! What's the correct address?"
-→ call mark_address_verified(call_direction="outbound", new_address="[their answer]")
-→ Route to QUALIFY
+IF NO / WRONG ADDRESS:
+-> "What is the correct address?"
+WAIT for answer
+-> call mark_address_verified(call_direction="outbound", new_address="[their answer]")
+-> Route to QUALIFY
 
-=== SCENARIO 2: MISSING INFO ===
-If anything is missing, collect it naturally:
+=== INBOUND (no address on file) ===
+"What property are you interested in discussing?"
+-> call update_lead_info(property_address=X, property_city=Y)
+-> call mark_address_verified()
+-> Route to QUALIFY
 
-Missing address?
-→ "What property are you interested in discussing?"
-→ Store with update_lead_info, then mark_address_verified
-
-Missing email?
-→ "And what's the best email to send your information to?"
-→ Store with update_lead_info, then mark_email_verified
-
-Then proceed to verify as above.
-
-=== SCENARIO 3: INBOUND CALL ===
-If call_direction="inbound":
-- Verify each piece individually
-- Use mark_phone_verified, mark_email_verified, mark_address_verified separately
-- Call mark_verified when all complete
-
-=== KEY RULES ===
-- ONE question for outbound warm leads with complete data
-- Only ask for what we DON'T have
-- Don't make them feel like they're filling out a form
-- Warm and conversational""",
+=== RULES ===
+- Just street and city (no ZIP code)
+- Short and efficient
+- Do not read full address with state and ZIP""",
         "valid_contexts": ["qualify", "answer", "quote", "objections"],
         "functions": ["update_lead_info", "mark_verified", "mark_phone_verified", "mark_email_verified", "mark_address_verified", "mark_ready_to_book"],
-        "step_criteria": "Property confirmed (outbound: one question). Missing info collected. verified=true. Route to QUALIFY."
+        "step_criteria": "Property confirmed. Route to QUALIFY."
     },
     "qualify": {
-        "instructions": """=== CONVERSATIONAL QUALIFICATION ===
+        "instructions": """=== QUALIFY NODE ===
 
-GOAL: Confirm what we have, ask for what's missing, be warm. Data may be stale - always verify.
+FIRST LINE (always say this when entering):
+"Perfect. Let me ask a few quick questions to make sure this program is a good fit for you."
 
-Available data:
-- Age: ${global_data.caller_age}
-- Home Value: ${global_data.property_value}
-- Mortgage Balance: ${global_data.mortgage_balance}
-- Estimated Equity: ${global_data.estimated_equity}
+=== FLOW ===
 
-=== STEP 1: AGE ===
-Have age in DB:
-  "I have you as [age] - over 62, is that correct?"
-Missing:
-  "And are you 62 or older?"
+1. AGE:
+   "Are you 62 or older?"
+   WAIT for response
+   - YES: "Great." -> call mark_age_qualified()
+   - NO: "Unfortunately this program requires you to be 62 or older. Thanks for your time." -> Route to GOODBYE
+   
+   Also call: mark_homeowner_qualified() and mark_primary_residence_qualified()
 
-→ If YES: call mark_age_qualified(is_qualified=true)
-→ If NO (under 62): Politely explain program requires 62+ → GOODBYE
-→ If different than DB: call update_lead_info(age=X)
+2. HOME VALUE (ALWAYS ASK - even if we have data in DB):
+   "What would you say your home is worth today?"
+   WAIT for response
+   - Answer: "Got it."
 
-=== STEP 2: HOME VALUE ===
-Have value in DB:
-  "We show your home valued at around ${global_data.property_value} - does that seem about right?"
-Missing:
-  "What would you say your home is worth today?"
+3. MORTGAGE:
+   "Do you have a mortgage on the property?"
+   WAIT for response
+   - YES: "About how much do you still owe?" -> store amount
+   - NO: mortgage = 0, "Nice."
 
-→ Acknowledge warmly: "That's wonderful!" or "That's a great property!"
-→ If different than DB: call update_lead_info(property_value=X)
+4. SAVE TO DATABASE:
+   -> call update_lead_info(property_value=X, mortgage_balance=Y, estimated_equity=X-Y)
+   -> call mark_equity_qualified()
+   
+   "Great, let me show you what you might be able to access."
+   -> Route to QUOTE
 
-=== STEP 3: MORTGAGE STATUS ===
-"Do you currently have a mortgage on the property?"
+=== RULES ===
+- SHORT acknowledgments only: "Great", "Got it", "Nice", "Okay"
+- DO NOT say "Thank you for confirming..." after every answer
+- DO NOT calculate reverse mortgage amounts here - that is QUOTE job
+- DO NOT ask "Do you have X in equity?" - just collect value and mortgage
+- ALWAYS ask home value even if we have it (data may be stale)
 
-If YES (has mortgage):
-  "About how much do you still owe on it?"
-  → call update_lead_info(mortgage_balance=X)
-  → "Great, so you have roughly [equity] in equity - that's excellent!"
+=== CRITICAL: QUALIFICATION MARKERS REQUIRED ===
+⚠️ You MUST call these tools - they update the database!
+⚠️ Without these calls, the lead will NOT show as qualified in the system.
 
-If NO (paid off):
-  → "Wow, that's fantastic! Having your home paid off puts you in a really great position."
-  → call update_lead_info(mortgage_balance=0)
+REQUIRED CALLS:
+1. After confirming age 62+: mark_age_qualified()
+2. After confirming homeownership: mark_homeowner_qualified()
+3. After confirming primary residence: mark_primary_residence_qualified()
+4. After getting equity info: mark_equity_qualified()
 
-=== COMPLETION ===
-→ call mark_homeowner_qualified(is_qualified=true)
-→ call mark_primary_residence_qualified(is_qualified=true)
-→ call mark_equity_qualified(is_qualified=true)
-
-"Perfect! Based on what you've told me, you look like a great candidate. Let me show you what you might qualify for..."
-→ Route to QUOTE
-
-KEY RULES:
-- Always confirm even if we have data (it may be stale)
-- Be warm and encouraging throughout
-- Update DB with any corrections
-- One question at a time, conversational""",
+DO NOT skip these calls - the CRM depends on them!""",
         "valid_contexts": ["goodbye", "quote", "objections"],
         "functions": ["mark_age_qualified", "mark_homeowner_qualified", "mark_primary_residence_qualified", "mark_equity_qualified", "update_lead_info", "mark_ready_to_book"],
-        "step_criteria": "Age confirmed 62+, home value confirmed, mortgage status confirmed. All qualification flags set. Route to QUOTE."
+        "step_criteria": "Age confirmed 62+, home value and mortgage collected. Route to QUOTE."
     },
     "quote": {
-        "instructions": """=== PRESENT NUMBERS & PUSH TO BOOK ===
+        "instructions": """=== QUOTE NODE ===
 
-GOAL: Show them the money, then get them booked.
+FIRST LINE (if entering fresh):
+"Based on what you have told me, let me calculate what you might qualify for."
 
-Available data:
-- Property Value: ${global_data.property_value}
-- Age: ${global_data.caller_age}
-- Mortgage Balance: ${global_data.mortgage_balance}
-- Broker Name: ${global_data.broker_name}
+=== STEP 1: CALL THE CALCULATION TOOL ===
+MANDATORY: call calculate_reverse_mortgage(property_value=X, age=Y, mortgage_balance=Z)
+The tool uses real HUD PLF tables - NEVER estimate or make up numbers yourself.
+If missing any values, ask for them first.
 
-=== CALCULATE & PRESENT ===
+=== STEP 2: PRESENT RESULTS ===
+Read the tool response naturally. Then add:
+"These are preliminary estimates - ${global_data.broker_name} can confirm exact figures based on current rates."
 
-1. Calculate immediately:
-   → call calculate_reverse_mortgage(property_value=X, age=Y, mortgage_balance=Z)
+=== STEP 3: BOOKING PUSH ===
+"Would you like to schedule a quick call with ${global_data.broker_name} to go over your options?"
+WAIT for response
 
-2. Present the result, then add broker personalization:
-   [Present calculation result]
-   "${global_data.broker_name} can get you the exact numbers after your call."
-   
-   If amount is good: "That's a really nice amount to work with!"
-   If amount is modest: "That's solid, and no monthly payments."
-
-3. Mark it: → call mark_quote_presented()
-
-=== BOOKING INVITE ===
-
-If ready_to_book=true:
-  "Let me get you scheduled with ${global_data.broker_name}."
-  → Route to BOOK
-
-Otherwise:
-  "Would you like me to check ${global_data.broker_name}'s availability?"
+- YES or interested: 
+  -> call mark_quote_presented() 
+  -> call mark_ready_to_book() 
+  -> Route to BOOK
   
-  - YES: mark_ready_to_book() → BOOK
-  - Questions: → ANSWER
-  - Concerns: → OBJECTIONS
-  - Hard NO: → GOODBYE
-
-SAFE LANGUAGE RULES:
-- Say "estimated", "approximately", "around", "potentially"
-- Always: "${global_data.broker_name} can confirm exact figures"
-- Never guarantee amounts - frame as preliminary
+- Questions: Route to ANSWER
+- Concerns: Route to OBJECTIONS
+- Hard NO: call mark_quote_presented() -> Route to GOODBYE
 
 === CRITICAL BOOKING RULES ===
-⚠️ NEVER say "appointment is set/booked/scheduled" - you CANNOT book in QUOTE context!
-⚠️ You MUST route to BOOK context to schedule appointments.
-⚠️ To book: call mark_ready_to_book() → Route to BOOK → let BOOK context handle it.
-⚠️ If you say "booked" without routing to BOOK, the appointment will NOT exist!""",
+NEVER say "Your appointment is set" or "booked" or "scheduled" or "confirmed" in QUOTE context.
+You CANNOT book appointments here - you MUST route to BOOK first.
+The book_appointment tool is NOT available in QUOTE context.
+If you say "appointment is set" without routing to BOOK, NO APPOINTMENT EXISTS and the broker will never know.
+
+CORRECT: "Great, let me get you scheduled..." -> Route to BOOK
+WRONG: "Your appointment is set for Tuesday at 4:30!" (This is a hallucination - nothing was actually booked)""",
         "valid_contexts": ["answer", "book", "goodbye", "objections"],
         "functions": ["calculate_reverse_mortgage", "mark_quote_presented", "update_lead_info", "mark_ready_to_book"],
-        "step_criteria": "Quote presented with safe language, broker mentioned, booking offered."
+        "step_criteria": "Quote presented via calculate tool, booking offered."
     },
     "answer": {
         "instructions": """=== ANSWER QUESTIONS (Educational, Not Pushy) ===
@@ -466,23 +440,23 @@ FALLBACK_MODELS = {
 def log_theme_fallback(vertical: str, reason: str, is_exception: bool = False):
     """Log LOUD when theme fallback is used"""
     logger.error("=" * 80)
-    logger.error("🚨🚨🚨 DATABASE FAILURE: THEME PROMPT 🚨🚨🚨")
+    logger.error("DATABASE FAILURE: THEME PROMPT")
     logger.error(f"Vertical: {vertical}")
     logger.error(f"Table: theme_prompts")
     logger.error(f"Reason: {reason}")
-    logger.error(f"Impact: Using FALLBACK_THEME (snapshot from 2025-11-21)")
-    logger.error(f"⚠️  CALLERS WILL RECEIVE POTENTIALLY OUTDATED CONTENT")
+    logger.error(f"Impact: Using FALLBACK_THEME (snapshot from 2025-12-09)")
+    logger.error(f"CALLERS WILL RECEIVE POTENTIALLY OUTDATED CONTENT")
     logger.error(f"Action: Verify theme_prompts table has active row for vertical='{vertical}'")
     logger.error(f"        Check Supabase connection and logs")
     if is_exception:
-        logger.error(f"⚠️⚠️⚠️ DATABASE CONNECTION UNREACHABLE ⚠️⚠️⚠️")
+        logger.error(f"DATABASE CONNECTION UNREACHABLE")
     logger.error("=" * 80)
 
 
 def log_node_config_fallback(node_name: str, vertical: str, reason: str, is_exception: bool = False, has_fallback: bool = True):
     """Log LOUD when node config fallback is used"""
     logger.error("=" * 80)
-    logger.error(f"🚨🚨🚨 DATABASE FAILURE: NODE CONFIG '{node_name}' 🚨🚨🚨")
+    logger.error(f"DATABASE FAILURE: NODE CONFIG '{node_name}'")
     logger.error(f"Node: {node_name}")
     logger.error(f"Vertical: {vertical}")
     logger.error(f"Tables: prompts, prompt_versions")
@@ -490,32 +464,32 @@ def log_node_config_fallback(node_name: str, vertical: str, reason: str, is_exce
     
     if has_fallback:
         logger.error(f"Impact: Using FALLBACK_NODE_CONFIG['{node_name}']")
-        logger.error(f"⚠️  Agent will use HARDCODED instructions/functions/routing from 2025-11-21")
-        logger.error(f"⚠️  Any database changes since snapshot will NOT be reflected")
+        logger.error(f"Agent will use HARDCODED instructions/functions/routing from 2025-12-09")
+        logger.error(f"Any database changes since snapshot will NOT be reflected")
     else:
         logger.error(f"Impact: NO FALLBACK AVAILABLE FOR NODE '{node_name}'")
-        logger.error(f"⚠️⚠️⚠️ AGENT CANNOT FUNCTION IN THIS NODE ⚠️⚠️⚠️")
-        logger.error(f"⚠️⚠️⚠️ USING GENERIC INSTRUCTIONS - CALL QUALITY WILL SUFFER ⚠️⚠️⚠️")
+        logger.error(f"AGENT CANNOT FUNCTION IN THIS NODE")
+        logger.error(f"USING GENERIC INSTRUCTIONS - CALL QUALITY WILL SUFFER")
     
     logger.error(f"Action: Check prompts table for node_name='{node_name}', vertical='{vertical}'")
     logger.error(f"        Check prompt_versions table for is_active=true")
     logger.error(f"        Verify Supabase connection and credentials")
     if is_exception:
-        logger.error(f"⚠️⚠️⚠️ DATABASE CONNECTION UNREACHABLE ⚠️⚠️⚠️")
+        logger.error(f"DATABASE CONNECTION UNREACHABLE")
     logger.error("=" * 80)
 
 
 def log_model_fallback(model_type: str, reason: str, fallback_value: str):
     """Log LOUD when model fallback is used"""
     logger.error("=" * 80)
-    logger.error(f"🚨🚨🚨 DATABASE FAILURE: {model_type.upper()} MODEL 🚨🚨🚨")
+    logger.error(f"DATABASE FAILURE: {model_type.upper()} MODEL")
     logger.error(f"Platform: SignalWire")
     logger.error(f"Model Type: {model_type}")
     logger.error(f"Table: signalwire_available_{model_type}_models")
     logger.error(f"Reason: {reason}")
     logger.error(f"Impact: Using FALLBACK_MODELS['{model_type}'] = '{fallback_value}'")
-    logger.error(f"⚠️  Using hardcoded model from 2025-11-21 snapshot")
-    logger.error(f"⚠️  If you changed the active model in Vue, it will NOT be used")
+    logger.error(f"Using hardcoded model from 2025-12-09 snapshot")
+    logger.error(f"If you changed the active model in Vue, it will NOT be used")
     logger.error(f"Action: Check signalwire_available_{model_type}_models table")
     logger.error(f"        Ensure at least ONE model has is_active=true")
     logger.error(f"        Verify Supabase connection")
