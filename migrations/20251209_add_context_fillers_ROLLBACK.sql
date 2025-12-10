@@ -9,3 +9,4 @@ UPDATE contexts_config
 SET enter_fillers = '[]'::jsonb, exit_fillers = '[]'::jsonb
 WHERE vertical = 'reverse_mortgage' AND context_name = 'quote';
 
+
