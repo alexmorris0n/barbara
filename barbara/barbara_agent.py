@@ -468,8 +468,10 @@ When booking, offer the next available slot first. If they need a different time
             "conversation_id": phone,
             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
             "local_tz": "America/Los_Angeles",
-            # NOTE: debug_webhook_url removed - was causing SWML generation to fail
-            # TODO: Implement properly by building URL manually (get_full_url doesn't take path param)
+            # Debug webhook sends full transcripts to Supabase Edge Function
+            # Anon key in URL allows JWT verification to pass
+            "debug_webhook_url": "https://mxnqfwuhvurajrgoefyg.supabase.co/functions/v1/debug-webhook?apikey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im14bnFmd3VodnVyYWpyZ29lZnlnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk4NzU3OTAsImV4cCI6MjA3NTQ1MTc5MH0.QMoZAjIKkB05Vr9nM1FKbC2ke5RTvfv6zrSDU0QMuN4",
+            "debug_webhook_level": 2,  # Level 2 = full verbosity (transcripts, tool calls, etc.)
         })
         
         # Configure voice
