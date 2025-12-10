@@ -269,10 +269,13 @@ Rules:
         # This plays BEFORE the AI loads, filling the silence gap
         # Prevents leads from saying "Hello?" multiple times and hanging up
         # Includes required recording disclosure upfront
+        # 
+        # NOTE: We load the voice from DB here since we need it for the greeting
+        # before the main models are loaded later in this method
         if direction == "outbound":
-            # Get voice from database (loaded later, but we need it now)
-            # Using default fallback since models aren't loaded yet
-            outbound_voice = "elevenlabs.rachel"  # Default Barbara voice
+            # Get voice from database (needed for greeting before full config loads)
+            models_for_voice = get_active_signalwire_models()
+            outbound_voice = models_for_voice.get("tts_voice_string", "elevenlabs.rachel")
             self.add_post_answer_verb("play", {
                 "url": "say:This is Barbara from Equity Connect calling on a recorded line. How are you?",
                 "say_voice": outbound_voice
