@@ -276,3 +276,21 @@ def handle_mark_objection_handled(phone: str, objection_handled: bool = True) ->
         )
     
     return SwaigFunctionResult("Error updating objection status")
+
+
+def handle_mark_sms_consent(phone: str, sms_consent: bool) -> SwaigFunctionResult:
+    """Record whether caller consented to receive SMS reminders"""
+    phone = normalize_phone(phone)
+    
+    success = update_conversation_state(phone, {
+        "conversation_data": {"sms_consent": sms_consent}
+    })
+    
+    if success:
+        logger.info(f"[FLAGS] mark_sms_consent={sms_consent} for {phone}")
+        return (
+            SwaigFunctionResult("SMS preference noted")
+            .update_global_data({"sms_consent": sms_consent})
+        )
+    
+    return SwaigFunctionResult("Error saving SMS preference")

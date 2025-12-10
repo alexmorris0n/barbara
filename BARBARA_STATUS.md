@@ -33,8 +33,11 @@
 - ✅ Created `call_debug_logs` table for storing debug data
 - ✅ Fixed SWML null response issue (removed broken get_full_url usage)
 
+- ✅ Created `appointments` table for reminder tracking
+- ✅ Added persona SMS webhook trigger (n8n adds delay for natural feel)
+- ✅ Updated `booking` tool to record appointments for reminders
+
 ### Blocking Issues
-- [ ] 10DLC registration needed for SMS appointment confirmations
 - [ ] JWT verification must be manually disabled for edge functions (Supabase limitation)
 
 ---

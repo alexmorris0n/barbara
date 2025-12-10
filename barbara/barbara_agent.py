@@ -51,6 +51,7 @@ from tools.flags import (
     handle_mark_handoff_complete,
     handle_mark_has_objection,
     handle_mark_objection_handled,
+    handle_mark_sms_consent,
 )
 from tools.verification import (
     handle_mark_phone_verified,
@@ -928,6 +929,25 @@ When booking, offer the next available slot first. If they need a different time
         phone = raw_data.get("caller_id_num", "")
         objection_handled = args.get("objection_handled", True)
         return handle_mark_objection_handled(phone, objection_handled)
+    
+    @AgentBase.tool(
+        name="mark_sms_consent",
+        description="Record whether caller consented to receive SMS text reminders for their appointment. MUST ask before booking.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "sms_consent": {
+                    "type": "boolean",
+                    "description": "Whether caller agreed to receive text reminders"
+                }
+            },
+            "required": ["sms_consent"]
+        }
+    )
+    def mark_sms_consent(self, args, raw_data):
+        phone = raw_data.get("caller_id_num", "")
+        sms_consent = args.get("sms_consent")
+        return handle_mark_sms_consent(phone, sms_consent)
     
     # ----- VERIFICATION TOOLS -----
     

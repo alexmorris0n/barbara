@@ -22,8 +22,10 @@ except ImportError:
 
 from services.database import (
     get_lead_by_phone,
+    get_conversation_state,
     update_conversation_state,
-    normalize_phone
+    normalize_phone,
+    create_appointment
 )
 
 logger = logging.getLogger(__name__)
@@ -120,6 +122,57 @@ def _parse_appointment_time(preferred_time: str, broker_tz_name: str = 'America/
     except Exception as e:
         logger.warning(f"[BOOKING] Could not parse time '{preferred_time}': {e}")
         return None, None
+
+
+def _trigger_persona_sms_webhook(
+    to_number: str,
+    persona_name: str,
+    lead_first_name: str,
+    broker_name: str,
+    friendly_time: str,
+    appointment_iso: str,
+    sms_consent: bool = False
+) -> None:
+    """
+    Trigger n8n webhook to send personalized SMS from persona.
+    n8n will add a delay before sending to make it feel natural.
+    
+    ONLY sends if sms_consent=True (caller agreed to receive texts).
+    """
+    if not sms_consent:
+        logger.info(f"[WEBHOOK] Skipping persona SMS - no consent for {to_number}")
+        return
+    
+    webhook_url = "https://n8n.instaroute.com/webhook/persona-sms"
+    
+    if not httpx:
+        logger.warning("[WEBHOOK] httpx not available - skipping persona SMS webhook")
+        return
+    
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            response = client.post(
+                webhook_url,
+                json={
+                    "to_number": to_number,
+                    "persona_name": persona_name or "Your advisor",
+                    "lead_first_name": lead_first_name or "there",
+                    "broker_name": broker_name,
+                    "friendly_time": friendly_time,
+                    "appointment_iso": appointment_iso,
+                    "sms_consent": sms_consent,
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "source": "barbara_agent"
+                }
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"[WEBHOOK] Persona SMS webhook triggered for {to_number}")
+            else:
+                logger.error(f"[WEBHOOK] Persona SMS webhook failed: {response.status_code}")
+                
+    except Exception as e:
+        logger.error(f"[WEBHOOK] Failed to trigger persona SMS webhook: {e}")
 
 
 def handle_booking(phone: str, preferred_time: str, notes: str = None) -> SwaigFunctionResult:
@@ -240,6 +293,36 @@ def handle_booking(phone: str, preferred_time: str, notes: str = None) -> SwaigF
             })
             
             logger.info(f"[BOOKING] Appointment created: {event_id} for {phone} at {friendly_time}")
+            
+            # Get SMS consent from conversation state
+            state = get_conversation_state(phone)
+            sms_consent = state.get('conversation_data', {}).get('sms_consent', False) if state else False
+            
+            # Trigger n8n to send personalized SMS from persona (with delay)
+            # Only sends if sms_consent=True
+            persona_name = (lead.get('persona_sender_name') or '').split()[0] if lead.get('persona_sender_name') else ''
+            lead_first_name = lead.get('first_name', '')
+            _trigger_persona_sms_webhook(
+                to_number=phone,
+                persona_name=persona_name,
+                lead_first_name=lead_first_name,
+                broker_name=broker_name,
+                friendly_time=friendly_time,
+                appointment_iso=appointment_dt.isoformat(),
+                sms_consent=sms_consent
+            )
+            
+            # Create appointment record for reminders (sync)
+            try:
+                create_appointment(
+                    lead_id=lead_id,
+                    broker_id=broker_id,
+                    appointment_time=appointment_dt.isoformat(),
+                    nylas_event_id=event_id,
+                    sms_consent=sms_consent
+                )
+            except Exception as e:
+                logger.error(f"[BOOKING] Failed to create appointment record: {e}")
             
             # Per Section 6.16.2.3: Update global_data so AI sees booking is complete
             return (

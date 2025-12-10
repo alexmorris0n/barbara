@@ -1722,7 +1722,9 @@ const availableTools = [
   'mark_age_qualified',
   'mark_homeowner_qualified',
   'mark_primary_residence_qualified',
-  'mark_equity_qualified'
+  'mark_equity_qualified',
+  // SMS Consent (Dec 2025)
+  'mark_sms_consent'
 ]
 
 // State
@@ -2146,6 +2148,7 @@ const ALL_TOOLS_WITH_DESCRIPTIONS = {
     { name: 'mark_qualification_result', desc: 'Log qualification outcome (qualified/not_qualified)' },
     { name: 'mark_quote_presented', desc: 'Log quote presentation and lead\'s reaction' },
     { name: 'mark_wrong_person', desc: 'Mark when wrong person answers phone' },
+    { name: 'mark_sms_consent', desc: 'Record SMS consent (true/false) - REQUIRED before booking' },
     { name: 'clear_conversation_flags', desc: 'Reset all workflow flags' }
   ]
 }
