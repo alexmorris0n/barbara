@@ -2063,9 +2063,10 @@ const promptSections = [
 
 // Node-based prompt sections (NO personality - handled by theme_prompts table)
 const nodePromptSections = [
-  { key: 'role', label: 'Role & Objective', required: true, placeholder: 'Define the node\'s role and objective...' },
-  { key: 'instructions', label: 'Instructions & Rules', required: true, placeholder: 'Node-specific behavior, guardrails, completion criteria...' },
-  { key: 'tools', label: 'Tools', required: false, placeholder: 'Available tools (comma-separated): verify_caller_identity, mark_quote_presented, book_appointment...' },
+  { key: 'role', label: 'Role & Objective', required: true, placeholder: 'Define the node\'s role and objective...', tooltip: 'What is this node responsible for? What defines success?' },
+  { key: 'instructions', label: 'Instructions & Rules', required: true, placeholder: 'Node-specific behavior, guardrails, completion criteria...', tooltip: 'Step-by-step instructions, dos/don\'ts, and when to complete this node.' },
+  { key: 'routing', label: 'Routing Logic', required: true, placeholder: '→ If condition: Route to NODE\n→ If other condition: Route to OTHER_NODE\n→ Default: Route to FALLBACK', tooltip: 'Define when to transition to other nodes. Uses → arrows for clarity. Loaded into agent prompt automatically.' },
+  { key: 'tools', label: 'Tools', required: false, placeholder: 'Available tools (comma-separated): verify_caller_identity, mark_quote_presented, book_appointment...', tooltip: 'Which SWAIG tools should be available for this node?' },
 ]
 
 const guideContent = [
@@ -5465,6 +5466,7 @@ function loadCurrentNode() {
     // NOTE: personality is now handled by theme_prompts table, not individual nodes
     currentVersion.value.content.role = content.role || ''
     currentVersion.value.content.instructions = content.instructions || ''
+    currentVersion.value.content.routing = content.routing || ''
     currentVersion.value.content.tools = Array.isArray(content.tools) ? content.tools.join(', ') : (content.tools || '')
     
   } else {
@@ -5478,6 +5480,7 @@ function loadCurrentNode() {
     currentVersion.value.content.role = ''
     // NOTE: personality is now handled by theme_prompts table, not individual nodes
     currentVersion.value.content.instructions = ''
+    currentVersion.value.content.routing = ''
     currentVersion.value.content.tools = ''
   }
   
@@ -5506,6 +5509,7 @@ async function saveCurrentNode() {
     const contentObj = {
       role: currentVersion.value.content.role || '',
       instructions: currentVersion.value.content.instructions || '',
+      routing: currentVersion.value.content.routing || '',
       tools: currentVersion.value.content.tools ? currentVersion.value.content.tools.split(',').map(t => t.trim()) : []
     }
     

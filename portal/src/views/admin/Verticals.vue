@@ -4349,13 +4349,12 @@ async function loadNodePrompts() {
     const grouped = {}
     for (const p of (data || [])) {
       console.log('loadNodePrompts: Processing prompt:', p.node_name, 'id:', p.id)
-      // Choose draft version if available, otherwise active version
+      // Choose LATEST draft version if available, otherwise LATEST active version
       let matchingVersion
       if (Array.isArray(p.prompt_versions)) {
-        matchingVersion = p.prompt_versions.find(v => v.is_draft) || p.prompt_versions.find(v => v.is_active)
-        if (!matchingVersion) {
-          matchingVersion = [...p.prompt_versions].sort((a, b) => (b.version_number || 0) - (a.version_number || 0))[0]
-        }
+        // Sort by version number descending to get latest first
+        const sorted = [...p.prompt_versions].sort((a, b) => (b.version_number || 0) - (a.version_number || 0))
+        matchingVersion = sorted.find(v => v.is_draft) || sorted.find(v => v.is_active) || sorted[0]
       } else {
         matchingVersion = p.prompt_versions
       }
@@ -5449,6 +5448,7 @@ async function toggleNode(node) {
         const newNodeContent = {
           role: content.role || '',
           instructions: content.instructions || '',
+          routing: content.routing || '',
           step_criteria: content.step_criteria || '',
           valid_contexts: [...validContextsArray], // Create new array copy for reactivity
           tools: [...toolsArray], // Create new array copy for reactivity
@@ -5462,6 +5462,7 @@ async function toggleNode(node) {
       console.log('No content found, initializing empty for', node)
       nodeContent.value[node] = {
         instructions: '',
+        routing: '',
         step_criteria: '',
         valid_contexts: [], // Initialize as empty array for multi-select
         tools: [], // Initialize as empty array for multi-select
@@ -6600,19 +6601,8 @@ function autoResizeNodeTextareas(node) {
   }
   
   textareas.forEach((textarea, index) => {
-    // Ensure the textarea value is set (for :value binding)
-    const nodeContentValue = nodeContent.value[node]
-    if (nodeContentValue) {
-      // Force Vue to sync the value by reading the binding
-      // This ensures the textarea.value is set correctly
-      if (index === 0 && nodeContentValue.role !== undefined) {
-        textarea.value = nodeContentValue.role || ''
-      } else if (index === 1 && nodeContentValue.instructions !== undefined) {
-        textarea.value = nodeContentValue.instructions || ''
-      } else if (index === 2 && nodeContentValue.step_criteria !== undefined) {
-        textarea.value = nodeContentValue.step_criteria || ''
-      }
-    }
+    // Don't manually set textarea.value - let Vue's :value binding handle it
+    // Manually setting bypasses Vue reactivity and causes sync issues
     
     // Store current scroll position
     const scrollTop = textarea.scrollTop
