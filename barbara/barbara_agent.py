@@ -41,6 +41,7 @@ from services.availability import fetch_broker_availability, format_slots_for_ll
 # Import tool handlers
 from tools.flags import (
     handle_mark_greeted,
+    handle_set_caller_goal,
     handle_mark_verified,
     handle_mark_qualified,
     handle_mark_qualification_result,
@@ -352,6 +353,12 @@ Rules:
             "caller_last_name": lead.get('last_name', '') if lead else '',
             "caller_age": lead.get('age', 0) if lead else 0,
             
+            # Persona info (from email campaign)
+            # Extract first name safely - handle NULL, whitespace-only, and missing values
+            "persona_name": ((lead.get('persona_sender_name') or '').split()[0] 
+                           if lead and (lead.get('persona_sender_name') or '').strip() 
+                           else ''),
+            
             # Property info
             "property_address": lead.get('property_address', '') if lead else '',
             "property_city": lead.get('property_city', '') if lead else '',
@@ -375,6 +382,7 @@ Rules:
             "qualified": lead.get('qualified', False) if lead else False,
             
             # Conversation state (from conversation_state table)
+            "caller_goal": conversation_data.get('caller_goal', ''),  # Why they want a reverse mortgage
             "greeted": conversation_data.get('greeted', False),
             "quote_presented": conversation_data.get('quote_presented', False),
             "ready_to_book": conversation_data.get('ready_to_book', False),
@@ -409,6 +417,10 @@ Rules:
         self.prompt_add_section(
             "Caller Context",
             """You are speaking with ${global_data.caller_name} (phone: ${global_data.caller_phone}).
+
+=== CAMPAIGN INFO ===
+Persona (who sent email): ${global_data.persona_name}
+Caller's Goal: ${global_data.caller_goal}
 
 === PROPERTY INFO ===
 Address: ${global_data.property_address}
@@ -718,6 +730,30 @@ When booking, offer the next available slot first. If they need a different time
         greeted = args.get("greeted", True)
         reason_summary = args.get("reason_summary")
         return handle_mark_greeted(phone, greeted, reason_summary)
+    
+    @AgentBase.tool(
+        name="set_caller_goal",
+        description="Save the caller's goal or reason for wanting a reverse mortgage. Call this after they share what they want to accomplish.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "goal": {
+                    "type": "string",
+                    "description": "The caller's goal (e.g., 'pay off mortgage', 'supplement income', 'home repairs', 'help family', 'travel')"
+                },
+                "goal_details": {
+                    "type": "string",
+                    "description": "Optional additional details about their goal"
+                }
+            },
+            "required": ["goal"]
+        }
+    )
+    def set_caller_goal(self, args, raw_data):
+        phone = raw_data.get("caller_id_num", "")
+        goal = args.get("goal", "")
+        goal_details = args.get("goal_details", "")
+        return handle_set_caller_goal(phone, goal, goal_details)
     
     @AgentBase.tool(
         name="mark_verified",

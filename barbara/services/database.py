@@ -343,11 +343,13 @@ def get_theme_prompt(vertical: str = "reverse_mortgage") -> Optional[str]:
             
             # PREFER: Structured format (content_structured JSONB)
             if row.get('content_structured'):
-                # Assemble theme from structured sections (identity, output_rules, conversational_flow, tools, guardrails)
+                # Assemble theme from structured sections
                 theme_data = row['content_structured']
                 sections = []
                 if theme_data.get('identity'):
                     sections.append(theme_data['identity'])
+                if theme_data.get('personality'):
+                    sections.append(f"# Personality\n\n{theme_data['personality']}")
                 if theme_data.get('output_rules'):
                     sections.append(f"# Output rules\n\n{theme_data['output_rules']}")
                 if theme_data.get('conversational_flow'):

@@ -43,6 +43,30 @@ def handle_mark_greeted(phone: str, greeted: bool = True, reason_summary: str = 
     return SwaigFunctionResult("Error updating greeting status")
 
 
+def handle_set_caller_goal(phone: str, goal: str, goal_details: str = "") -> SwaigFunctionResult:
+    """Save caller's goal/reason for wanting a reverse mortgage"""
+    phone = normalize_phone(phone)
+    
+    # Combine goal and details
+    full_goal = goal
+    if goal_details:
+        full_goal = f"{goal}: {goal_details}"
+    
+    success = update_conversation_state(phone, {
+        "conversation_data": {"caller_goal": full_goal}
+    })
+    
+    if success:
+        logger.info(f"[FLAGS] set_caller_goal for {phone}: {goal}")
+        # Update global_data so AI can reference goal throughout conversation
+        return (
+            SwaigFunctionResult(f"Got it, noted that the caller wants to {goal}.")
+            .update_global_data({"caller_goal": full_goal})
+        )
+    
+    return SwaigFunctionResult("Error saving caller goal")
+
+
 def handle_mark_verified(phone: str, verified: bool = True) -> SwaigFunctionResult:
     """Mark caller verified"""
     phone = normalize_phone(phone)
