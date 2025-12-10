@@ -36,3 +36,4 @@ COMMENT ON TABLE call_debug_logs IS 'Stores debug webhook data from SignalWire i
 
 
 
+

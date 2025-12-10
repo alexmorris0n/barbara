@@ -14,3 +14,4 @@ COMMENT ON COLUMN leads.mortgage_balance IS 'Current mortgage balance on the pro
 
 
 
+
