@@ -93,3 +93,4 @@ FROM active_node_prompts
 WHERE vertical = 'reverse_mortgage'
 ORDER BY node_name;
 
+

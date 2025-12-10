@@ -7,3 +7,4 @@ DROP INDEX IF EXISTS idx_leads_mortgage_balance;
 ALTER TABLE leads DROP COLUMN IF EXISTS mortgage_balance;
 
 
+

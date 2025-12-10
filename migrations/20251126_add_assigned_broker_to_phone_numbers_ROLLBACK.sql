@@ -17,3 +17,4 @@ ALTER TABLE phone_numbers DROP COLUMN IF EXISTS assigned_broker_id;
 
 
 
+

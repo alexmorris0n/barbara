@@ -13,3 +13,4 @@ CREATE INDEX IF NOT EXISTS idx_leads_mortgage_balance ON leads(mortgage_balance)
 COMMENT ON COLUMN leads.mortgage_balance IS 'Current mortgage balance on the property, collected during qualification calls';
 
 
+

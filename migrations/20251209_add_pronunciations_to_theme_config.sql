@@ -22,3 +22,4 @@ WHERE vertical = 'reverse_mortgage';
 COMMENT ON COLUMN theme_prompts.config IS 'JSONB object storing vertical-specific settings: models (llm/stt/tts), vad, eos_timeout_ms, record_call, telephony (auto_answer, ring_delay_ms), safety (blocked_phrases, max_tool_depth), pronunciations (array of {replace, with} objects for TTS)';
 
 
+
