@@ -4475,8 +4475,17 @@ async function loadNodePrompts() {
           }
           
           // Use Vue's reactive assignment to ensure reactivity
+          // Initialize with ALL fields to ensure Vue tracks them
           if (!nodeContent.value[p.node_name]) {
-            nodeContent.value[p.node_name] = {}
+            nodeContent.value[p.node_name] = {
+              role: '',
+              instructions: '',
+              routing: '',
+              step_criteria: '',
+              valid_contexts: [],
+              tools: [],
+              skip_user_turn: false
+            }
           }
           // Extract content fields - handle both string and object formats
           const roleValue = typeof matchingVersion.content.role === 'string' 
@@ -4491,6 +4500,12 @@ async function loadNodePrompts() {
           const routingValue = typeof matchingVersion.content.routing === 'string'
             ? matchingVersion.content.routing
             : (matchingVersion.content.routing || '')
+          
+          console.log('ROUTING DEBUG for', p.node_name, ':', {
+            rawRouting: matchingVersion.content.routing,
+            routingValue: routingValue,
+            stepCriteriaValue: stepCriteriaValue
+          })
           
           nodeContent.value[p.node_name].role = roleValue
           nodeContent.value[p.node_name].instructions = instructionsValue
@@ -4535,10 +4550,11 @@ async function loadNodePrompts() {
     console.log('loadNodePrompts: Greet node data:', grouped['greet'])
     console.log('loadNodePrompts: All nodes found:', Object.keys(grouped))
     
-    initNodeContent()
+    // Note: initNodeContent() is already called in onVerticalChange() before loadNodePrompts()
+    // Don't call it again here as it would overwrite loaded data
     
-    // Debug: Check nodeContent after init
-    console.log('loadNodePrompts: nodeContent.greet after init:', nodeContent.value['greet'])
+    // Debug: Check nodeContent after load
+    console.log('loadNodePrompts: nodeContent.greet after load:', nodeContent.value['greet'])
   } catch (error) {
     console.error('Error loading node prompts:', error)
     window.$message?.error('Failed to load node prompts: ' + error.message)
