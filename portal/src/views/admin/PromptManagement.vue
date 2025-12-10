@@ -2065,7 +2065,6 @@ const promptSections = [
 const nodePromptSections = [
   { key: 'role', label: 'Role & Objective', required: true, placeholder: 'Define the node\'s role and objective...' },
   { key: 'instructions', label: 'Instructions & Rules', required: true, placeholder: 'Node-specific behavior, guardrails, completion criteria...' },
-  { key: 'routing', label: 'Routing', required: false, placeholder: '→ If caller asks question: Route to ANSWER\n→ If ready to book: Route to BOOK\n→ If not interested: Route to GOODBYE' },
   { key: 'tools', label: 'Tools', required: false, placeholder: 'Available tools (comma-separated): verify_caller_identity, mark_quote_presented, book_appointment...' },
 ]
 
@@ -5466,7 +5465,6 @@ function loadCurrentNode() {
     // NOTE: personality is now handled by theme_prompts table, not individual nodes
     currentVersion.value.content.role = content.role || ''
     currentVersion.value.content.instructions = content.instructions || ''
-    currentVersion.value.content.routing = content.routing || ''
     currentVersion.value.content.tools = Array.isArray(content.tools) ? content.tools.join(', ') : (content.tools || '')
     
   } else {
@@ -5480,7 +5478,6 @@ function loadCurrentNode() {
     currentVersion.value.content.role = ''
     // NOTE: personality is now handled by theme_prompts table, not individual nodes
     currentVersion.value.content.instructions = ''
-    currentVersion.value.content.routing = ''
     currentVersion.value.content.tools = ''
   }
   
@@ -5506,11 +5503,9 @@ async function saveCurrentNode() {
     
     // Build JSONB content object from currentVersion.content
     // NOTE: personality is now handled by theme_prompts table, not individual nodes
-    // NOTE: routing is stored separately but assembled into instructions by the agent
     const contentObj = {
       role: currentVersion.value.content.role || '',
       instructions: currentVersion.value.content.instructions || '',
-      routing: currentVersion.value.content.routing || '',
       tools: currentVersion.value.content.tools ? currentVersion.value.content.tools.split(',').map(t => t.trim()) : []
     }
     
