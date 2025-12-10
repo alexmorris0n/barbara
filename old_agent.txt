@@ -468,8 +468,6 @@ When booking, offer the next available slot first. If they need a different time
             "conversation_id": phone,
             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
             "local_tz": "America/Los_Angeles",
-            # NOTE: debug_webhook_url removed - was causing SWML generation to fail
-            # TODO: Implement properly by building URL manually (get_full_url doesn't take path param)
         })
         
         # Configure voice
@@ -507,9 +505,6 @@ When booking, offer the next available slot first. If they need a different time
         Called after call ends with structured data from set_post_prompt.
         
         Writes call summary to Supabase interactions table.
-        
-        NOTE: This callback may be triggered multiple times during a call (e.g., on context switches).
-        We only save to DB when we have actual post_prompt_data with an outcome.
         """
         if not summary and not raw_data:
             logger.warning("[BARBARA] on_summary called with no data")
@@ -525,12 +520,6 @@ When booking, offer the next available slot first. If they need a different time
                 # Handle parsed JSON if available
                 if isinstance(post_prompt_data, dict) and "parsed" in post_prompt_data:
                     post_prompt_data = post_prompt_data["parsed"]
-            
-            # CRITICAL: Only save to DB if we have actual post_prompt_data with content
-            # The callback can be triggered multiple times with empty data during context switches
-            if not post_prompt_data or not post_prompt_data.get("outcome"):
-                logger.info(f"[BARBARA] on_summary called without outcome - skipping DB insert (context switch?)")
-                return
             
             # Get call metadata
             call_id = raw_data.get("call_id", "") if raw_data else ""
@@ -570,11 +559,11 @@ When booking, offer the next available slot first. If they need a different time
             
             # Log what we found for debugging
             if not phone:
-                logger.warning(f"[BARBARA] ⚠️ Could not find phone. Keys: {list(raw_data.keys()) if raw_data else []}")
+                logger.warning(f"[BARBARA] ΓÜá∩╕Å Could not find phone. Keys: {list(raw_data.keys()) if raw_data else []}")
                 if raw_data and raw_data.get("params"):
-                    logger.warning(f"[BARBARA] ⚠️ params keys: {list(raw_data.get('params', {}).keys())}")
+                    logger.warning(f"[BARBARA] ΓÜá∩╕Å params keys: {list(raw_data.get('params', {}).keys())}")
             
-            logger.info(f"[BARBARA] 📝 Post-prompt received for {phone}")
+            logger.info(f"[BARBARA] ≡ƒô¥ Post-prompt received for {phone}")
             logger.info(f"[BARBARA]   Call ID: {call_id}")
             logger.info(f"[BARBARA]   Duration: {duration}s")
             logger.info(f"[BARBARA]   Outcome: {post_prompt_data.get('outcome', 'unknown')}")
@@ -609,12 +598,12 @@ When booking, offer the next available slot first. If they need a different time
             )
             
             if success:
-                logger.info(f"[BARBARA] ✅ Call summary saved to interactions table")
+                logger.info(f"[BARBARA] Γ£à Call summary saved to interactions table")
             else:
-                logger.warning(f"[BARBARA] ⚠️ Failed to save call summary")
+                logger.warning(f"[BARBARA] ΓÜá∩╕Å Failed to save call summary")
                 
         except Exception as e:
-            logger.error(f"[BARBARA] ❌ Error in on_summary: {e}", exc_info=True)
+            logger.error(f"[BARBARA] Γ¥î Error in on_summary: {e}", exc_info=True)
     
     def _build_contexts(self) -> None:
         """

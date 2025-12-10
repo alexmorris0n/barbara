@@ -1,0 +1,90 @@
+[1mdiff --git a/barbara/barbara_agent.py b/barbara/barbara_agent.py[m
+[1mindex 683da5a..ef67691 100644[m
+[1m--- a/barbara/barbara_agent.py[m
+[1m+++ b/barbara/barbara_agent.py[m
+[36m@@ -33,6 +33,7 @@[m [mfrom services.database import ([m
+     get_pronunciations,[m
+     normalize_phone,[m
+     insert_call_summary,[m
+[32m+[m[32m    insert_call_debug_log,[m
+ )[m
+ # build_context_injection replaced by set_global_data per SDK Section 6.16[m
+ from services.fallbacks import get_fallback_node_config[m
+[36m@@ -468,6 +469,8 @@[m [mWhen booking, offer the next available slot first. If they need a different time[m
+             "conversation_id": phone,[m
+             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",[m
+             "local_tz": "America/Los_Angeles",[m
+[32m+[m[32m            # NOTE: debug_webhook_url removed - was causing SWML generation to fail[m
+[32m+[m[32m            # TODO: Implement properly by building URL manually (get_full_url doesn't take path param)[m
+         })[m
+         [m
+         # Configure voice[m
+[36m@@ -505,6 +508,9 @@[m [mWhen booking, offer the next available slot first. If they need a different time[m
+         Called after call ends with structured data from set_post_prompt.[m
+         [m
+         Writes call summary to Supabase interactions table.[m
+[32m+[m[41m        [m
+[32m+[m[32m        NOTE: This callback may be triggered multiple times during a call (e.g., on context switches).[m
+[32m+[m[32m        We only save to DB when we have actual post_prompt_data with an outcome.[m
+         """[m
+         if not summary and not raw_data:[m
+             logger.warning("[BARBARA] on_summary called with no data")[m
+[36m@@ -521,6 +527,12 @@[m [mWhen booking, offer the next available slot first. If they need a different time[m
+                 if isinstance(post_prompt_data, dict) and "parsed" in post_prompt_data:[m
+                     post_prompt_data = post_prompt_data["parsed"][m
+             [m
+[32m+[m[32m            # CRITICAL: Only save to DB if we have actual post_prompt_data with content[m
+[32m+[m[32m            # The callback can be triggered multiple times with empty data during context switches[m
+[32m+[m[32m            if not post_prompt_data or not post_prompt_data.get("outcome"):[m
+[32m+[m[32m                logger.info(f"[BARBARA] on_summary called without outcome - skipping DB insert (context switch?)")[m
+[32m+[m[32m                return[m
+[32m+[m[41m            [m
+             # Get call metadata[m
+             call_id = raw_data.get("call_id", "") if raw_data else ""[m
+             duration = raw_data.get("call_duration", 0) if raw_data else 0[m
+[36m@@ -1271,4 +1283,45 @@[m [mWhen booking, offer the next available slot first. If they need a different time[m
+ # Entry point[m
+ if __name__ == "__main__":[m
+     agent = BarbaraAgent()[m
+[32m+[m[41m    [m
+[32m+[m[32m    # Add custom debug webhook endpoint[m
+[32m+[m[32m    # Per SDK Section 23689: debug_webhook_url receives debug data[m
+[32m+[m[32m    from fastapi import Request[m
+[32m+[m[41m    [m
+[32m+[m[32m    app = agent.get_app()[m
+[32m+[m[41m    [m
+[32m+[m[32m    @app.post("/debug-log")[m
+[32m+[m[32m    async def debug_log_endpoint(request: Request):[m
+[32m+[m[32m        """[m
+[32m+[m[32m        Receives debug webhook data from SignalWire.[m
+[32m+[m[32m        Logs transcripts, tool calls, context switches at level 2.[m
+[32m+[m[32m        """[m
+[32m+[m[32m        try:[m
+[32m+[m[32m            data = await request.json()[m
+[32m+[m[32m            call_id = data.get("call_id", "")[m
+[32m+[m[32m            event_type = data.get("event_type") or data.get("type", "unknown")[m
+[32m+[m[41m            [m
+[32m+[m[32m            # Try to find lead_id from the data[m
+[32m+[m[32m            lead_id = None[m
+[32m+[m[32m            if data.get("caller_id_num"):[m
+[32m+[m[32m                phone = normalize_phone(data.get("caller_id_num", ""))[m
+[32m+[m[32m                if phone:[m
+[32m+[m[32m                    lead = get_lead_by_phone(phone)[m
+[32m+[m[32m                    lead_id = lead.get("id") if lead else None[m
+[32m+[m[41m            [m
+[32m+[m[32m            # Save to database[m
+[32m+[m[32m            insert_call_debug_log([m
+[32m+[m[32m                call_id=call_id,[m
+[32m+[m[32m                event_type=event_type,[m
+[32m+[m[32m                event_data=data,[m
+[32m+[m[32m                lead_id=lead_id[m
+[32m+[m[32m            )[m
+[32m+[m[41m            [m
+[32m+[m[32m            logger.info(f"[DEBUG-LOG] Received {event_type} for call {call_id}")[m
+[32m+[m[32m            return {"status": "ok"}[m
+[32m+[m[41m            [m
+[32m+[m[32m        except Exception as e:[m
+[32m+[m[32m            logger.error(f"[DEBUG-LOG] Error processing debug data: {e}")[m
+[32m+[m[32m            return {"status": "error", "message": str(e)}[m
+[32m+[m[41m    [m
+     agent.run()[m
