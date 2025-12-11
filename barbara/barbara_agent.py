@@ -484,10 +484,10 @@ When booking, offer the next available slot first. If they need a different time
             "conversation_id": phone,
             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
             "local_tz": "America/Los_Angeles",
-            # Debug webhook sends full transcripts to Supabase Edge Function
-            # Anon key in URL allows JWT verification to pass
-            "debug_webhook_url": "https://mxnqfwuhvurajrgoefyg.supabase.co/functions/v1/debug-webhook?apikey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im14bnFmd3VodnVyYWpyZ29lZnlnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk4NzU3OTAsImV4cCI6MjA3NTQ1MTc5MH0.QMoZAjIKkB05Vr9nM1FKbC2ke5RTvfv6zrSDU0QMuN4",
-            "debug_webhook_level": 2,  # Level 2 = full verbosity (transcripts, tool calls, etc.)
+            # Debug webhook disabled - we get full transcripts from post_prompt already
+            # Uncomment below if real-time debugging is needed:
+            # "debug_webhook_url": "https://mxnqfwuhvurajrgoefyg.supabase.co/functions/v1/debug-webhook?apikey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im14bnFmd3VodnVyYWpyZ29lZnlnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk4NzU3OTAsImV4cCI6MjA3NTQ1MTc5MH0.QMoZAjIKkB05Vr9nM1FKbC2ke5RTvfv6zrSDU0QMuN4",
+            # "debug_webhook_level": 2,
         })
         
         # Configure voice
@@ -734,17 +734,17 @@ When booking, offer the next available slot first. If they need a different time
     
     @AgentBase.tool(
         name="set_caller_goal",
-        description="Save the caller's goal or reason for wanting a reverse mortgage. Call this after they share what they want to accomplish.",
+        description="Save the caller's stated goal. ONLY call this AFTER the caller explicitly tells you their goal or reason. Do NOT assume or infer goals - wait for them to say it. Examples: 'I want to do home repairs' or 'pay off my mortgage'.",
         parameters={
             "type": "object",
             "properties": {
                 "goal": {
                     "type": "string",
-                    "description": "The caller's goal (e.g., 'pay off mortgage', 'supplement income', 'home repairs', 'help family', 'travel')"
+                    "description": "The caller's STATED goal in their own words (e.g., 'pay off mortgage', 'home repairs', 'help family'). Must come from what they actually said."
                 },
                 "goal_details": {
                     "type": "string",
-                    "description": "Optional additional details about their goal"
+                    "description": "Additional details they shared about their goal"
                 }
             },
             "required": ["goal"]
