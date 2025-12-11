@@ -41,7 +41,6 @@ from services.availability import fetch_broker_availability, format_slots_for_ll
 # Import tool handlers
 from tools.flags import (
     handle_mark_greeted,
-    handle_set_caller_goal,
     handle_mark_verified,
     handle_mark_qualified,
     handle_mark_qualification_result,
@@ -51,7 +50,6 @@ from tools.flags import (
     handle_mark_handoff_complete,
     handle_mark_has_objection,
     handle_mark_objection_handled,
-    handle_mark_sms_consent,
 )
 from tools.verification import (
     handle_mark_phone_verified,
@@ -271,13 +269,10 @@ Rules:
         # This plays BEFORE the AI loads, filling the silence gap
         # Prevents leads from saying "Hello?" multiple times and hanging up
         # Includes required recording disclosure upfront
-        # 
-        # NOTE: We load the voice from DB here since we need it for the greeting
-        # before the main models are loaded later in this method
         if direction == "outbound":
-            # Get voice from database (needed for greeting before full config loads)
-            models_for_voice = get_active_signalwire_models()
-            outbound_voice = models_for_voice.get("tts_voice_string", "elevenlabs.rachel")
+            # Get voice from database (loaded later, but we need it now)
+            # Using default fallback since models aren't loaded yet
+            outbound_voice = "elevenlabs.rachel"  # Default Barbara voice
             self.add_post_answer_verb("play", {
                 "url": "say:This is Barbara from Equity Connect calling on a recorded line. How are you?",
                 "say_voice": outbound_voice
@@ -354,12 +349,6 @@ Rules:
             "caller_last_name": lead.get('last_name', '') if lead else '',
             "caller_age": lead.get('age', 0) if lead else 0,
             
-            # Persona info (from email campaign)
-            # Extract first name safely - handle NULL, whitespace-only, and missing values
-            "persona_name": ((lead.get('persona_sender_name') or '').split()[0] 
-                           if lead and (lead.get('persona_sender_name') or '').strip() 
-                           else ''),
-            
             # Property info
             "property_address": lead.get('property_address', '') if lead else '',
             "property_city": lead.get('property_city', '') if lead else '',
@@ -383,7 +372,6 @@ Rules:
             "qualified": lead.get('qualified', False) if lead else False,
             
             # Conversation state (from conversation_state table)
-            "caller_goal": conversation_data.get('caller_goal', ''),  # Why they want a reverse mortgage
             "greeted": conversation_data.get('greeted', False),
             "quote_presented": conversation_data.get('quote_presented', False),
             "ready_to_book": conversation_data.get('ready_to_book', False),
@@ -418,10 +406,6 @@ Rules:
         self.prompt_add_section(
             "Caller Context",
             """You are speaking with ${global_data.caller_name} (phone: ${global_data.caller_phone}).
-
-=== CAMPAIGN INFO ===
-Persona (who sent email): ${global_data.persona_name}
-Caller's Goal: ${global_data.caller_goal}
 
 === PROPERTY INFO ===
 Address: ${global_data.property_address}
@@ -484,10 +468,8 @@ When booking, offer the next available slot first. If they need a different time
             "conversation_id": phone,
             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
             "local_tz": "America/Los_Angeles",
-            # Debug webhook sends full transcripts to Supabase Edge Function
-            # Anon key in URL allows JWT verification to pass
-            "debug_webhook_url": "https://mxnqfwuhvurajrgoefyg.supabase.co/functions/v1/debug-webhook?apikey=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im14bnFmd3VodnVyYWpyZ29lZnlnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTk4NzU3OTAsImV4cCI6MjA3NTQ1MTc5MH0.QMoZAjIKkB05Vr9nM1FKbC2ke5RTvfv6zrSDU0QMuN4",
-            "debug_webhook_level": 2,  # Level 2 = full verbosity (transcripts, tool calls, etc.)
+            # NOTE: debug_webhook_url removed - was causing SWML generation to fail
+            # TODO: Implement properly by building URL manually (get_full_url doesn't take path param)
         })
         
         # Configure voice
@@ -733,30 +715,6 @@ When booking, offer the next available slot first. If they need a different time
         return handle_mark_greeted(phone, greeted, reason_summary)
     
     @AgentBase.tool(
-        name="set_caller_goal",
-        description="Save the caller's goal or reason for wanting a reverse mortgage. Call this after they share what they want to accomplish.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "goal": {
-                    "type": "string",
-                    "description": "The caller's goal (e.g., 'pay off mortgage', 'supplement income', 'home repairs', 'help family', 'travel')"
-                },
-                "goal_details": {
-                    "type": "string",
-                    "description": "Optional additional details about their goal"
-                }
-            },
-            "required": ["goal"]
-        }
-    )
-    def set_caller_goal(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
-        goal = args.get("goal", "")
-        goal_details = args.get("goal_details", "")
-        return handle_set_caller_goal(phone, goal, goal_details)
-    
-    @AgentBase.tool(
         name="mark_verified",
         description="Mark that caller identity has been verified",
         parameters={
@@ -929,25 +887,6 @@ When booking, offer the next available slot first. If they need a different time
         phone = raw_data.get("caller_id_num", "")
         objection_handled = args.get("objection_handled", True)
         return handle_mark_objection_handled(phone, objection_handled)
-    
-    @AgentBase.tool(
-        name="mark_sms_consent",
-        description="Record whether caller consented to receive SMS text reminders for their appointment. MUST ask before booking.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "sms_consent": {
-                    "type": "boolean",
-                    "description": "Whether caller agreed to receive text reminders"
-                }
-            },
-            "required": ["sms_consent"]
-        }
-    )
-    def mark_sms_consent(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
-        sms_consent = args.get("sms_consent")
-        return handle_mark_sms_consent(phone, sms_consent)
     
     # ----- VERIFICATION TOOLS -----
     

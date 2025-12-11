@@ -218,10 +218,6 @@ def get_node_prompt(node_name: str, vertical: str = "reverse_mortgage") -> Optio
         if version_response.data:
             content = version_response.data[0].get('content', {})
             instructions = content.get('instructions', '')
-            # Append routing if present
-            routing = content.get('routing', '')
-            if routing:
-                instructions = f"{instructions}\n\n=== ROUTING ===\n{routing}"
             logger.info(f"[DB] Loaded prompt for node: {node_name}")
             return instructions
         
@@ -275,16 +271,8 @@ def get_node_config(node_name: str, vertical: str = "reverse_mortgage") -> Optio
             # Vue portal saves as 'tools', but SignalWire expects 'functions'
             # Support both for backward compatibility
             functions = content.get('functions', []) or content.get('tools', [])
-            
-            # Assemble instructions with routing (if present)
-            # Vue edits them separately, but we combine for the agent
-            instructions = content.get('instructions', '')
-            routing = content.get('routing', '')
-            if routing:
-                instructions = f"{instructions}\n\n=== ROUTING ===\n{routing}"
-            
             config = {
-                'instructions': instructions,
+                'instructions': content.get('instructions', ''),
                 'valid_contexts': content.get('valid_contexts', []),
                 'functions': functions,
                 'step_criteria': content.get('step_criteria', '')
@@ -355,13 +343,11 @@ def get_theme_prompt(vertical: str = "reverse_mortgage") -> Optional[str]:
             
             # PREFER: Structured format (content_structured JSONB)
             if row.get('content_structured'):
-                # Assemble theme from structured sections
+                # Assemble theme from structured sections (identity, output_rules, conversational_flow, tools, guardrails)
                 theme_data = row['content_structured']
                 sections = []
                 if theme_data.get('identity'):
                     sections.append(theme_data['identity'])
-                if theme_data.get('personality'):
-                    sections.append(f"# Personality\n\n{theme_data['personality']}")
                 if theme_data.get('output_rules'):
                     sections.append(f"# Output rules\n\n{theme_data['output_rules']}")
                 if theme_data.get('conversational_flow'):
@@ -673,47 +659,6 @@ def insert_call_summary(
         
     except Exception as e:
         logger.error(f"[DB] ❌ Error inserting call summary: {e}")
-        return False
-
-
-def create_appointment(
-    lead_id: str,
-    broker_id: str,
-    appointment_time: str,
-    nylas_event_id: str,
-    sms_consent: bool = False
-) -> bool:
-    """
-    Create a new appointment record for reminders
-    """
-    if not supabase:
-        return False
-        
-    try:
-        data = {
-            "lead_id": lead_id,
-            "broker_id": broker_id,
-            "appointment_time": appointment_time,
-            "nylas_event_id": nylas_event_id,
-            "status": "scheduled",
-            "sms_consent": sms_consent,
-            # Reminders will be sent by Edge Function later (only if sms_consent=True)
-            "confirmation_sent": False,
-            "reminder_24h_sent": False,
-            "reminder_1h_sent": False
-        }
-        
-        response = supabase.table("appointments").insert(data).execute()
-        
-        if response.data:
-            logger.info(f"[DB] ✅ Created appointment record for lead {lead_id} (sms_consent={sms_consent})")
-            return True
-            
-        logger.warning(f"[DB] ⚠️ No data returned when creating appointment")
-        return False
-        
-    except Exception as e:
-        logger.error(f"[DB] ❌ Error creating appointment: {e}")
         return False
 
 
