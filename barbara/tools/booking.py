@@ -219,7 +219,12 @@ def handle_booking(phone: str, preferred_time: str, notes: str = None) -> SwaigF
     import pytz
     tz = pytz.timezone(broker_tz)
     appointment_dt = datetime.fromtimestamp(start_unix, tz=tz)
-    friendly_time = appointment_dt.strftime("%A, %B %d at %-I:%M %p")
+    # Windows doesn't support %-I, use %#I or %I
+    try:
+        friendly_time = appointment_dt.strftime("%A, %B %d at %-I:%M %p")
+    except ValueError:
+        # Windows fallback: use %#I (removes leading zero) or %I (keeps it)
+        friendly_time = appointment_dt.strftime("%A, %B %d at %#I:%M %p").replace(" 0", " ")
     
     # Create Nylas v3 event - requires timezone in 'when' object
     lead_name = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip() or "Client"

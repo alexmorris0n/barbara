@@ -90,6 +90,7 @@ def fetch_broker_availability(
     
     # Try Nylas API if available
     if nylas_grant_id and httpx and NYLAS_API_KEY:
+        broker_email = broker.get('email')
         slots = _fetch_from_nylas(
             nylas_grant_id=nylas_grant_id,
             start_unix=start_unix,
@@ -99,7 +100,8 @@ def fetch_broker_availability(
             business_end=business_end,
             nylas_days=nylas_days,
             appointment_duration=appointment_duration,
-            max_slots=max_slots
+            max_slots=max_slots,
+            broker_email=broker_email
         )
         if slots:
             return slots
@@ -123,6 +125,52 @@ def fetch_broker_availability(
     )
 
 
+def _get_primary_calendar_email(nylas_grant_id: str) -> Optional[str]:
+    """Get the primary calendar email for a grant"""
+    try:
+        with httpx.Client(timeout=5.0) as client:
+            response = client.get(
+                f"{NYLAS_API_BASE}/grants/{nylas_grant_id}/calendars",
+                headers={
+                    "Authorization": f"Bearer {NYLAS_API_KEY}",
+                    "Content-Type": "application/json"
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                calendars = data.get('data', [])
+                
+                # Find primary calendar
+                for cal in calendars:
+                    if cal.get('is_primary', False):
+                        # Use calendar ID (which is often the email) or name
+                        calendar_id = cal.get('id', '')
+                        # If it looks like an email, use it; otherwise use the name
+                        if '@' in calendar_id:
+                            return calendar_id
+                        # Some calendars have email in name field
+                        name = cal.get('name', '')
+                        if '@' in name:
+                            return name
+                        return calendar_id
+                
+                # If no primary, use first writable calendar
+                for cal in calendars:
+                    if not cal.get('read_only', True) and cal.get('is_owned_by_user', False):
+                        calendar_id = cal.get('id', '')
+                        if '@' in calendar_id:
+                            return calendar_id
+                        name = cal.get('name', '')
+                        if '@' in name:
+                            return name
+                        return calendar_id
+    except Exception as e:
+        logger.warning(f"[AVAILABILITY] Failed to get primary calendar: {e}")
+    
+    return None
+
+
 def _fetch_from_nylas(
     nylas_grant_id: str,
     start_unix: int,
@@ -132,17 +180,29 @@ def _fetch_from_nylas(
     business_end: str,
     nylas_days: List[int],
     appointment_duration: int,
-    max_slots: int
+    max_slots: int,
+    broker_email: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """Fetch free/busy from Nylas API v3 using grant-specific endpoint"""
     try:
         # Nylas v3 free-busy endpoint: /v3/grants/{grant_id}/calendars/free-busy
         # This is more reliable than the global availability endpoint because it uses
         # grant_id directly in the URL, not requiring email matching
+        # Note: Some Nylas endpoints require email in request body even with grant_id in URL
+        
+        # Get the actual calendar email from the grant (broker_email might not match)
+        calendar_email = _get_primary_calendar_email(nylas_grant_id)
+        if not calendar_email:
+            logger.warning(f"[AVAILABILITY] Could not find primary calendar for grant {nylas_grant_id}")
+            return []
+        
         request_body = {
             "start_time": start_unix,
             "end_time": end_unix,
+            "emails": [calendar_email]  # Use the actual calendar email from the grant
         }
+        
+        logger.info(f"[AVAILABILITY] Using calendar email: {calendar_email} (broker_email was: {broker_email})")
         
         with httpx.Client(timeout=5.0) as client:
             # Grant-specific free-busy endpoint - uses grant_id in URL path
@@ -159,13 +219,49 @@ def _fetch_from_nylas(
             logger.error(f"[AVAILABILITY] Nylas API error: {response.status_code} - {response.text}")
             return []
         
-        data = response.json()
+        try:
+            data = response.json()
+        except Exception as e:
+            logger.error(f"[AVAILABILITY] Failed to parse Nylas response JSON: {e}")
+            return []
+        
+        # Log response structure for debugging
+        logger.debug(f"[AVAILABILITY] Nylas response keys: {list(data.keys()) if isinstance(data, dict) else 'Not a dict'}")
         
         # Free-busy returns busy periods in data[].time_slots[]
         # We need to extract busy times and filter them from generated slots
         busy_periods = []
-        for calendar_data in data.get('data', []):
-            for busy_slot in calendar_data.get('time_slots', []):
+        
+        # Handle response structure - could be {'data': [...]} or direct array
+        response_data = data.get('data', []) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        
+        if not isinstance(response_data, list):
+            logger.warning(f"[AVAILABILITY] Nylas response.data is not a list: {type(response_data)}")
+            response_data = []
+        
+        for calendar_data in response_data:
+            if not isinstance(calendar_data, dict):
+                continue
+            
+            # Check for error responses from Nylas
+            if calendar_data.get('object') == 'error':
+                error_msg = calendar_data.get('error', 'unknown')
+                logger.warning(f"[AVAILABILITY] Nylas calendar error for {calendar_data.get('email', 'unknown')}: {error_msg}")
+                continue
+            
+            # Handle null time_slots (Nylas returns null, not empty array)
+            time_slots = calendar_data.get('time_slots')
+            if time_slots is None:
+                logger.debug(f"[AVAILABILITY] No time_slots for {calendar_data.get('email', 'unknown')} (calendar may be empty)")
+                continue
+            
+            if not isinstance(time_slots, list):
+                logger.warning(f"[AVAILABILITY] Unexpected time_slots type: {type(time_slots)}")
+                continue
+            
+            for busy_slot in time_slots:
+                if not isinstance(busy_slot, dict):
+                    continue
                 busy_start = busy_slot.get('start_time')
                 busy_end = busy_slot.get('end_time')
                 if busy_start and busy_end:
@@ -328,7 +424,12 @@ def _generate_slots(
 
 def _format_slot_display(dt: datetime) -> str:
     """Format datetime for display: 'Tuesday Nov 26 at 2:00 PM'"""
-    return dt.strftime("%A %b %d at %-I:%M %p")
+    # Windows doesn't support %-I, use %#I or %I
+    try:
+        return dt.strftime("%A %b %d at %-I:%M %p")
+    except ValueError:
+        # Windows fallback: use %#I (removes leading zero) or %I (keeps it)
+        return dt.strftime("%A %b %d at %#I:%M %p").replace(" 0", " ")
 
 
 def filter_slots_by_time_of_day(slots: List[Dict[str, Any]], time_preference: str, broker_tz_name: str = 'America/Los_Angeles') -> List[Dict[str, Any]]:

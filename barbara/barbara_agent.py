@@ -482,7 +482,7 @@ When booking, offer the next available slot first. If they need a different time
             "wait_for_user": direction == "outbound",  # Wait for senior to answer on outbound calls
             "save_conversation": True,
             "conversation_id": phone,
-            "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
+            "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. CRITICAL: When caller asks 'how much', 'calculate', 'monthly payment', or any amount question, you MUST immediately call calculate_reverse_mortgage tool - do NOT say 'I will calculate' or explain first, just call the tool. Never estimate or guess numbers - always use the calculate_reverse_mortgage function.",
             "local_tz": "America/Los_Angeles",
             # Debug webhook disabled - we get full transcripts from post_prompt already
             # Uncomment below if real-time debugging is needed:
@@ -1053,7 +1053,7 @@ When booking, offer the next available slot first. If they need a different time
     
     @AgentBase.tool(
         name="calculate_reverse_mortgage",
-        description="ALWAYS call this when presenting a quote or answering 'how much can I get?' questions. Calculate available reverse mortgage funds using accurate HECM formulas with PLF tables - NEVER estimate or guess amounts.",
+        description="MANDATORY: You MUST call this tool IMMEDIATELY when the caller asks about loan amounts, monthly payments, 'how much can I get', 'calculate', or any calculation request. DO NOT say 'I will calculate' - just call this tool immediately. Calculate available reverse mortgage funds using accurate HECM formulas with PLF tables - NEVER estimate, guess, or provide ranges without calling this tool first. If caller asks 'how much' or 'calculate', call this tool NOW - do not delay or explain first.",
         parameters={
             "type": "object",
             "properties": {
