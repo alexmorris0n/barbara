@@ -202,6 +202,11 @@ Rules:
         - called_id_num: Number that was called
         - direction: "inbound" or "outbound"
         """
+        # CRITICAL: Clear any verbs from previous requests
+        # The agent is a singleton, so verbs persist between calls
+        self.clear_pre_answer_verbs()
+        self.clear_post_answer_verbs()
+        
         # Extract call data from SignalWire request
         call_data = request_data.get("call", {})
         direction = call_data.get("direction") or request_data.get("direction", "inbound")
