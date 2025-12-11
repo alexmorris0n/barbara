@@ -218,6 +218,10 @@ def get_node_prompt(node_name: str, vertical: str = "reverse_mortgage") -> Optio
         if version_response.data:
             content = version_response.data[0].get('content', {})
             instructions = content.get('instructions', '')
+            # Append routing if present
+            routing = content.get('routing', '')
+            if routing:
+                instructions = f"{instructions}\n\n=== ROUTING ===\n{routing}"
             logger.info(f"[DB] Loaded prompt for node: {node_name}")
             return instructions
         
@@ -271,8 +275,16 @@ def get_node_config(node_name: str, vertical: str = "reverse_mortgage") -> Optio
             # Vue portal saves as 'tools', but SignalWire expects 'functions'
             # Support both for backward compatibility
             functions = content.get('functions', []) or content.get('tools', [])
+            
+            # Assemble instructions with routing (if present)
+            # Vue edits them separately, but we combine for the agent
+            instructions = content.get('instructions', '')
+            routing = content.get('routing', '')
+            if routing:
+                instructions = f"{instructions}\n\n=== ROUTING ===\n{routing}"
+            
             config = {
-                'instructions': content.get('instructions', ''),
+                'instructions': instructions,
                 'valid_contexts': content.get('valid_contexts', []),
                 'functions': functions,
                 'step_criteria': content.get('step_criteria', '')
@@ -343,11 +355,13 @@ def get_theme_prompt(vertical: str = "reverse_mortgage") -> Optional[str]:
             
             # PREFER: Structured format (content_structured JSONB)
             if row.get('content_structured'):
-                # Assemble theme from structured sections (identity, output_rules, conversational_flow, tools, guardrails)
+                # Assemble theme from structured sections
                 theme_data = row['content_structured']
                 sections = []
                 if theme_data.get('identity'):
                     sections.append(theme_data['identity'])
+                if theme_data.get('personality'):
+                    sections.append(f"# Personality\n\n{theme_data['personality']}")
                 if theme_data.get('output_rules'):
                     sections.append(f"# Output rules\n\n{theme_data['output_rules']}")
                 if theme_data.get('conversational_flow'):
