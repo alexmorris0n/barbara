@@ -1724,7 +1724,9 @@ const availableTools = [
   'mark_primary_residence_qualified',
   'mark_equity_qualified',
   // SMS Consent (Dec 2025)
-  'mark_sms_consent'
+  'mark_sms_consent',
+  // Caller Goal (Dec 2025)
+  'set_caller_goal'
 ]
 
 // State
@@ -2149,6 +2151,7 @@ const ALL_TOOLS_WITH_DESCRIPTIONS = {
     { name: 'mark_quote_presented', desc: 'Log quote presentation and lead\'s reaction' },
     { name: 'mark_wrong_person', desc: 'Mark when wrong person answers phone' },
     { name: 'mark_sms_consent', desc: 'Record SMS consent (true/false) - REQUIRED before booking' },
+    { name: 'set_caller_goal', desc: 'Save caller\'s goal/reason for wanting a reverse mortgage' },
     { name: 'clear_conversation_flags', desc: 'Reset all workflow flags' }
   ]
 }
