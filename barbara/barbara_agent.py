@@ -482,7 +482,7 @@ When booking, offer the next available slot first. If they need a different time
             "wait_for_user": direction == "outbound",  # Wait for senior to answer on outbound calls
             "save_conversation": True,
             "conversation_id": phone,
-            "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. CRITICAL: When caller asks 'how much', 'calculate', 'monthly payment', or any amount question, you MUST immediately call calculate_reverse_mortgage tool - do NOT say 'I will calculate' or explain first, just call the tool. Never estimate or guess numbers - always use the calculate_reverse_mortgage function.",
+            "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
             "local_tz": "America/Los_Angeles",
             # Debug webhook disabled - we get full transcripts from post_prompt already
             # Uncomment below if real-time debugging is needed:
@@ -1053,7 +1053,7 @@ When booking, offer the next available slot first. If they need a different time
     
     @AgentBase.tool(
         name="calculate_reverse_mortgage",
-        description="MANDATORY: You MUST call this tool IMMEDIATELY when the caller asks about loan amounts, monthly payments, 'how much can I get', 'calculate', or any calculation request. DO NOT say 'I will calculate' - just call this tool immediately. Calculate available reverse mortgage funds using accurate HECM formulas with PLF tables - NEVER estimate, guess, or provide ranges without calling this tool first. If caller asks 'how much' or 'calculate', call this tool NOW - do not delay or explain first.",
+        description="ALWAYS call this when presenting a quote or answering 'how much can I get?' questions. Calculate available reverse mortgage funds using accurate HECM formulas with PLF tables - NEVER estimate or guess amounts.",
         parameters={
             "type": "object",
             "properties": {
@@ -1270,40 +1270,6 @@ When booking, offer the next available slot first. If they need a different time
             estimated_equity=args.get("estimated_equity"),
             mortgage_balance=args.get("mortgage_balance")
         )
-    
-    # ----- CONTEXT SWITCHING TOOL -----
-    
-    @AgentBase.tool(
-        name="change_context",
-        description="Switch to a different conversation context. Call this when routing instructions indicate transitioning between stages (e.g., from GREET to VERIFY, from QUALIFY to QUOTE). This is REQUIRED to move between conversation stages.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "context_name": {
-                    "type": "string",
-                    "description": "The context to switch to",
-                    "enum": ["greet", "verify", "qualify", "quote", "answer", "objections", "book", "goodbye"]
-                }
-            },
-            "required": ["context_name"]
-        }
-    )
-    def change_context(self, args, raw_data):
-        """
-        Per SDK Section 6.8-6.11: Context switching using swml_change_context()
-        This tool allows the AI to navigate between conversation stages.
-        """
-        context_name = args.get("context_name", "").lower()
-        phone = raw_data.get("caller_id_num", "")
-        
-        logger.info(f"[BARBARA] Context switch requested: {context_name} (phone: {phone})")
-        
-        # Update conversation state to track current context
-        update_conversation_state(phone, {
-            'current_node': context_name
-        })
-        
-        return SwaigFunctionResult(f"Switching to {context_name}").swml_change_context(context_name)
     
     # ----- TRANSFER TOOL -----
     

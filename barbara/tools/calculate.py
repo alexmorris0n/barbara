@@ -22,10 +22,10 @@ HECM_LENDING_LIMIT = 1149825
 # This affects PLF - lower rates = higher PLF
 EXPECTED_INTEREST_RATE = 7.0  # Approximate current rate
 
-# Principal Limit Factors (PLF) - HUD HECM table
+# Principal Limit Factors (PLF) - HUD table approximation
 # Based on age and expected interest rate of ~7%
 # Source: HUD HECM PLF tables
-HECM_PLF_TABLE = {
+PLF_TABLE = {
     62: 0.396, 63: 0.404, 64: 0.412, 65: 0.420, 66: 0.428,
     67: 0.436, 68: 0.445, 69: 0.454, 70: 0.463, 71: 0.472,
     72: 0.481, 73: 0.491, 74: 0.501, 75: 0.512, 76: 0.522,
@@ -36,93 +36,17 @@ HECM_PLF_TABLE = {
     97: 0.785, 98: 0.792, 99: 0.798
 }
 
-# Jumbo Reverse Mortgage PLF table (2026 data)
-# Jumbo PLFs are typically LOWER than HECM for ages 70+, but HIGHER for younger borrowers
-# Rates vary by lender - these are estimates based on 2026 market data
-JUMBO_PLF_TABLE = {
-    62: 0.410, 63: 0.415, 64: 0.420, 65: 0.424, 66: 0.428,
-    67: 0.432, 68: 0.437, 69: 0.442, 70: 0.453, 71: 0.460,
-    72: 0.467, 73: 0.474, 74: 0.481, 75: 0.497, 76: 0.505,
-    77: 0.513, 78: 0.521, 79: 0.529, 80: 0.544, 81: 0.555,
-    82: 0.566, 83: 0.577, 84: 0.588, 85: 0.600, 86: 0.612,
-    87: 0.624, 88: 0.636, 89: 0.648, 90: 0.660, 91: 0.672,
-    92: 0.684, 93: 0.696, 94: 0.708, 95: 0.720, 96: 0.730,
-    97: 0.738, 98: 0.745, 99: 0.750
-}
-
-# Estimated closing costs calculation
-# HECM: FHA insurance (2% of lesser of home value or lending limit, capped),
-#       origination fee (capped at $6,000), plus third-party fees (~$3k-$5k)
-# Jumbo: Similar structure but typically higher flat amounts for high-value homes
+# Estimated closing costs as percentage (origination, MIP, title, etc.)
+ESTIMATED_CLOSING_COST_PERCENT = 0.05  # ~5% of home value
 
 
-def get_plf(age: int, is_jumbo: bool = False) -> float:
-    """Get Principal Limit Factor for age
-    
-    Args:
-        age: Borrower age (youngest if couple)
-        is_jumbo: True for jumbo reverse mortgage, False for standard HECM
-    
-    Returns:
-        PLF rate as decimal (e.g., 0.396 = 39.6%)
-    """
+def get_plf(age: int) -> float:
+    """Get Principal Limit Factor for age"""
     if age < 62:
         return 0.0
-    
-    table = JUMBO_PLF_TABLE if is_jumbo else HECM_PLF_TABLE
-    max_age = 99
-    
-    if age >= max_age:
-        return table[max_age]
-    return table.get(age, table[max_age])
-
-
-def calculate_closing_costs(property_value: int, max_claim_amount: int, is_jumbo: bool) -> int:
-    """
-    Calculate realistic closing costs for reverse mortgage.
-    
-    For HECM:
-    - FHA upfront MIP: 2% of lesser of home value or HECM lending limit (capped)
-    - Origination fee: Capped at $6,000
-    - Third-party fees: ~$3,000-$5,000 (title, escrow, recording, appraisal, counseling)
-    
-    For Jumbo:
-    - Similar structure but typically higher flat amounts for high-value homes
-    - Typically $15k-$25k for very large loans
-    
-    Args:
-        property_value: Full home value
-        max_claim_amount: The amount used for PLF calculation (capped for HECM, full value for jumbo)
-        is_jumbo: True for jumbo reverse mortgage, False for standard HECM
-    
-    Returns:
-        Estimated closing costs in dollars
-    """
-    if is_jumbo:
-        # Jumbo: Use flat dollar estimates based on home value bands
-        # More realistic than percentage of full value
-        if property_value >= 2_000_000:
-            return 25_000  # High-value jumbo: $25k flat estimate
-        elif property_value >= 1_500_000:
-            return 20_000  # Mid-high jumbo: $20k flat estimate
-        elif property_value >= 1_200_000:
-            return 18_000  # Lower jumbo: $18k flat estimate
-        else:
-            return 15_000  # Just over HECM limit: $15k flat estimate
-    else:
-        # HECM: Use capped calculations
-        # FHA upfront MIP: 2% of lesser of home value or HECM lending limit
-        effective_base = min(property_value, HECM_LENDING_LIMIT)
-        fha_mip = int(effective_base * 0.02)  # 2% upfront MIP
-        
-        # Origination fee: Capped at $6,000
-        origination_fee = 6_000
-        
-        # Third-party fees: title, escrow, recording, appraisal, counseling
-        # Typically $3,000-$5,000 for standard HECM
-        third_party_fees = 4_000
-        
-        return fha_mip + origination_fee + third_party_fees
+    if age >= 99:
+        return PLF_TABLE[99]
+    return PLF_TABLE.get(age, PLF_TABLE[99])
 
 
 def handle_calculate(phone: str, property_value: int, age: int, mortgage_balance: int = 0) -> SwaigFunctionResult:
@@ -161,48 +85,31 @@ def handle_calculate(phone: str, property_value: int, age: int, mortgage_balance
         mortgage_balance = 0
     mortgage_balance = max(0, int(mortgage_balance))
     
-    # ===== HECM/JUMBO CALCULATION =====
+    # ===== HECM CALCULATION =====
     
-    # Step 1: Determine if this is a jumbo case (over HECM limit)
+    # Step 1: Apply HECM lending limit (can't borrow against value above limit)
+    max_claim_amount = min(property_value, HECM_LENDING_LIMIT)
     is_over_hecm_limit = property_value > HECM_LENDING_LIMIT
     
-    # Step 2: Check equity requirement for jumbo (must have at least 50% equity)
-    actual_equity = property_value - mortgage_balance
-    equity_percentage = (actual_equity / property_value) if property_value > 0 else 0
+    # Step 2: Get Principal Limit Factor based on age
+    plf = get_plf(age)
     
-    if is_over_hecm_limit and equity_percentage < 0.50:
-        return SwaigFunctionResult(
-            f"Jumbo reverse mortgages require at least 50% equity in your home. "
-            f"Based on your home value of ${property_value:,} and ${mortgage_balance:,} mortgage balance, "
-            f"you currently have {equity_percentage:.1%} equity. "
-            f"Your specialist can review whether standard HECM options or other solutions might work better for your situation."
-        )
-    
-    # Step 3: For jumbo, use full property value; for standard HECM, cap at limit
-    # Jumbo reverse mortgages don't have the HECM lending limit cap
-    if is_over_hecm_limit:
-        max_claim_amount = property_value  # Jumbo: use full value
-    else:
-        max_claim_amount = min(property_value, HECM_LENDING_LIMIT)  # Standard: cap at limit
-    
-    # Step 4: Get Principal Limit Factor based on age and loan type
-    # Jumbo uses different (typically lower) PLF rates than standard HECM
-    plf = get_plf(age, is_jumbo=is_over_hecm_limit)
-    
-    # Step 5: Calculate gross principal limit
+    # Step 3: Calculate gross principal limit
     gross_principal_limit = int(max_claim_amount * plf)
     
-    # Step 6: Calculate realistic closing costs (capped for HECM, flat for jumbo)
-    estimated_closing_costs = calculate_closing_costs(
-        property_value, max_claim_amount, is_over_hecm_limit
-    )
+    # Step 4: Subtract estimated closing costs (based on max_claim_amount, NOT full property value)
+    # FIX: Closing costs apply to the HECM amount, not the home value
+    estimated_closing_costs = int(max_claim_amount * ESTIMATED_CLOSING_COST_PERCENT)
     
-    # Step 7: Subtract existing mortgage payoff (MANDATORY - must pay off existing mortgage)
-    # Step 8: Calculate net available to borrower
+    # Step 5: Subtract existing mortgage payoff (MANDATORY - must pay off existing mortgage)
+    # Step 6: Calculate net available to borrower
     net_available = gross_principal_limit - estimated_closing_costs - mortgage_balance
     
     # Can't be negative
     net_available = max(0, net_available)
+    
+    # Calculate actual equity for reference
+    actual_equity = property_value - mortgage_balance
     
     # Calculate tenure payment (monthly for life while living in home)
     # Using actuarial estimate based on life expectancy
@@ -210,45 +117,45 @@ def handle_calculate(phone: str, property_value: int, age: int, mortgage_balance
     tenure_months = 180  # 15 years
     monthly_tenure = int(net_available / tenure_months) if net_available > 0 else 0
     
-    # Build response - always show both lump sum and monthly payment
-    response = f"Based on an estimated home value of ${property_value:,}"
-    if mortgage_balance > 0:
-        response += f" and paying off your ${mortgage_balance:,} mortgage"
-    
-    # Always show both lump sum and monthly payment values
-    response += (
-        f", you could potentially access around ${net_available:,} as a lump sum"
-    )
-    
-    # Add monthly payment (even if $0)
-    if monthly_tenure > 0:
-        response += f", or roughly ${monthly_tenure:,} per month"
-    else:
-        response += f", with ${monthly_tenure:,} per month"
-    
-    # Add context about loan type (jumbo is common in California)
-    if is_over_hecm_limit:
-        response += (
-            f". This calculation uses jumbo reverse mortgage terms, which apply to homes over ${HECM_LENDING_LIMIT:,}. "
-        )
-    else:
-        response += (
-            f". This calculation uses standard HECM terms. "
-        )
-    
-    response += (
-        f"These are preliminary estimates only - actual amounts depend on current interest rates and a full application review."
-    )
-    
-    # If net_available is 0 or negative, add helpful context
+    # Build response with safe/disclaimer language
     if net_available <= 0:
-        if is_over_hecm_limit:
-            response += (
-                f" Your specialist can review jumbo options that may offer better terms for your situation."
+        # Check if this is a high-value home that exceeds HECM limits
+        # These leads are EXCELLENT candidates for jumbo reverse mortgages
+        if is_over_hecm_limit and actual_equity > 200000:
+            response = (
+                f"Great news! With a home value of ${property_value:,} and ${actual_equity:,} in equity, "
+                f"you're actually an excellent candidate for a jumbo reverse mortgage. "
+                f"The standard government HECM program has a ${HECM_LENDING_LIMIT:,} limit, "
+                f"but there are jumbo options for higher-value homes like yours that can access much more. "
+                f"Your specialist will have better numbers for you based on those programs."
+            )
+        elif mortgage_balance > gross_principal_limit:
+            # High mortgage relative to principal limit
+            response = (
+                f"Based on your home value of ${property_value:,}, the reverse mortgage would first need to pay off "
+                f"your ${mortgage_balance:,} existing mortgage. With the current rates and lending limits, "
+                f"your specialist can review whether a jumbo product or other options might work better for your situation."
             )
         else:
+            response = (
+                f"Based on an estimated home value of ${property_value:,} and mortgage balance of ${mortgage_balance:,}, "
+                f"the standard program may be limited. Your specialist can review all available options with you, "
+                f"including jumbo programs that may offer more flexibility."
+            )
+    else:
+        response = f"Based on an estimated home value of ${property_value:,}"
+        if mortgage_balance > 0:
+            response += f" and paying off your ${mortgage_balance:,} mortgage"
+        response += (
+            f", you could potentially access around ${net_available:,} as a lump sum, "
+            f"or roughly ${monthly_tenure:,} per month. "
+            f"These are preliminary estimates only - actual amounts depend on current interest rates and a full application review."
+        )
+        # Add note about jumbo options for high-value homes
+        if is_over_hecm_limit:
             response += (
-                f" Your specialist can review all available options, including jumbo programs for higher-value homes."
+                f" And since your home exceeds the standard ${HECM_LENDING_LIMIT:,} limit, "
+                f"there may be jumbo options that could offer even more."
             )
     
     # Update conversation state (sync)
