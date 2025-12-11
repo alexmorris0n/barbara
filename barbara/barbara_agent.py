@@ -1271,6 +1271,40 @@ When booking, offer the next available slot first. If they need a different time
             mortgage_balance=args.get("mortgage_balance")
         )
     
+    # ----- CONTEXT SWITCHING TOOL -----
+    
+    @AgentBase.tool(
+        name="change_context",
+        description="Switch to a different conversation context. Call this when routing instructions indicate transitioning between stages (e.g., from GREET to VERIFY, from QUALIFY to QUOTE). This is REQUIRED to move between conversation stages.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "context_name": {
+                    "type": "string",
+                    "description": "The context to switch to",
+                    "enum": ["greet", "verify", "qualify", "quote", "answer", "objections", "book", "goodbye"]
+                }
+            },
+            "required": ["context_name"]
+        }
+    )
+    def change_context(self, args, raw_data):
+        """
+        Per SDK Section 6.8-6.11: Context switching using swml_change_context()
+        This tool allows the AI to navigate between conversation stages.
+        """
+        context_name = args.get("context_name", "").lower()
+        phone = raw_data.get("caller_id_num", "")
+        
+        logger.info(f"[BARBARA] Context switch requested: {context_name} (phone: {phone})")
+        
+        # Update conversation state to track current context
+        update_conversation_state(phone, {
+            'current_node': context_name
+        })
+        
+        return SwaigFunctionResult(f"Switching to {context_name}").swml_change_context(context_name)
+    
     # ----- TRANSFER TOOL -----
     
     @AgentBase.tool(

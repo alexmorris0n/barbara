@@ -122,7 +122,6 @@ If YES:
   -> Call set_caller_goal() if they share a new/updated goal
   -> Respond with appropriate emotional tone (see theme guidelines)
   -> call mark_greeted()
-  -> Route based on their status
 
 If NO (different person):
   "Oh, my apologies! And who am I speaking with?"
@@ -139,7 +138,6 @@ WAIT - let them share their goals
 -> Call set_caller_goal() to save what they shared
 -> Respond with appropriate emotional tone (see theme guidelines)
 -> call mark_greeted()
--> Route to VERIFY
 
 ========================================
 === OUTBOUND CALLS ===
@@ -206,7 +204,6 @@ STEP 5: TRANSITION TO VERIFY
 After acknowledging their goal:
 "Alright, let me just confirm your address real quick."
 -> call mark_greeted()
--> Route to VERIFY
 
 ========================================
 === EMOTIONAL RESPONSE TO GOALS ===
@@ -218,8 +215,13 @@ Quick reference:
 - POSITIVE goals (travel, home improvements, paying off mortgage): Be warm and encouraging
 - SENSITIVE goals (medical, family emergency, hardship): Be empathetic, NEVER excited""",
         "valid_contexts": ["answer", "verify", "quote", "qualify", "goodbye", "objections", "book"],
-        "functions": ["mark_greeted", "mark_wrong_person", "set_caller_goal"],
-        "step_criteria": "Identity confirmed, goal captured with set_caller_goal(), mark_greeted() called. Route based on status."
+        "functions": ["mark_greeted", "mark_wrong_person", "set_caller_goal", "change_context"],
+        "step_criteria": "Identity confirmed and mark_greeted() called",
+        "routing": """→ If appointment_booked=true: call change_context("answer") or change_context("goodbye")
+→ If quote_presented=true: call change_context("answer")
+→ If qualified=true: call change_context("quote")
+→ If verified=true: call change_context("qualify")
+→ Otherwise: call change_context("verify")"""
     },
     "verify": {
         "instructions": """=== VERIFY NODE ===
@@ -239,27 +241,25 @@ WAIT for response
 
 IF YES:
 -> call mark_address_verified(call_direction="outbound")
--> Route to QUALIFY
 
 IF NO / WRONG ADDRESS:
 -> "What is the correct address?"
 WAIT for answer
 -> call mark_address_verified(call_direction="outbound", new_address="[their answer]")
--> Route to QUALIFY
 
 === INBOUND (no address on file) ===
 "What property are you interested in discussing?"
 -> call update_lead_info(property_address=X, property_city=Y)
 -> call mark_address_verified()
--> Route to QUALIFY
 
 === RULES ===
 - Just street and city (no ZIP code)
 - Short and efficient
 - Do not read full address with state and ZIP""",
         "valid_contexts": ["qualify", "answer", "quote", "objections"],
-        "functions": ["update_lead_info", "mark_verified", "mark_phone_verified", "mark_email_verified", "mark_address_verified", "mark_ready_to_book"],
-        "step_criteria": "Property confirmed. Route to QUALIFY."
+        "functions": ["update_lead_info", "mark_verified", "mark_phone_verified", "mark_email_verified", "mark_address_verified", "mark_ready_to_book", "change_context"],
+        "step_criteria": "Address verified with mark_address_verified() called",
+        "routing": """→ After address confirmed: call change_context("qualify")"""
     },
     "qualify": {
         "instructions": """=== QUALIFY NODE ===
@@ -279,7 +279,7 @@ If caller says "I want to schedule", "Lets book", "Can we set up a time":
    "Are you 62 or older?"
    WAIT for response
    - YES: "Great." -> call mark_age_qualified()
-   - NO: "Unfortunately this program requires you to be 62 or older. Thanks for your time." -> Route to GOODBYE
+   - NO: "Unfortunately this program requires you to be 62 or older. Thanks for your time."
    
    Also call: mark_homeowner_qualified() and mark_primary_residence_qualified()
 
@@ -299,7 +299,6 @@ If caller says "I want to schedule", "Lets book", "Can we set up a time":
    -> call mark_equity_qualified()
    
    "Great, let me show you what you might be able to access."
-   -> Route to QUOTE
 
 === RULES ===
 - SHORT acknowledgments only: "Great", "Got it", "Nice", "Okay"
@@ -308,8 +307,11 @@ If caller says "I want to schedule", "Lets book", "Can we set up a time":
 - DO NOT ask "Do you have X in equity?" - just collect value and mortgage
 - ALWAYS ask home value even if we have it (data may be stale)""",
         "valid_contexts": ["goodbye", "quote", "objections"],
-        "functions": ["mark_age_qualified", "mark_homeowner_qualified", "mark_primary_residence_qualified", "mark_equity_qualified", "update_lead_info", "mark_ready_to_book"],
-        "step_criteria": "Age confirmed 62+, home value and mortgage collected. Route to QUOTE."
+        "functions": ["mark_age_qualified", "mark_homeowner_qualified", "mark_primary_residence_qualified", "mark_equity_qualified", "update_lead_info", "mark_ready_to_book", "change_context"],
+        "step_criteria": "All qualification gates checked (age, homeowner, residence, equity)",
+        "routing": """→ If age < 62: call change_context("goodbye") (disqualify)
+→ If qualified (all gates pass): call change_context("quote")
+→ If objection raised: call change_context("objections")"""
     },
     "quote": {
         "instructions": """=== QUOTE NODE ===
@@ -332,12 +334,11 @@ WAIT for response
 
 - YES or interested: 
   -> call mark_quote_presented() 
-  -> call mark_ready_to_book() 
-  -> Route to BOOK
+  -> call mark_ready_to_book()
   
-- Questions: Route to ANSWER
-- Concerns: Route to OBJECTIONS
-- Hard NO: call mark_quote_presented() -> Route to GOODBYE
+- Questions: answer them
+- Concerns: address them
+- Hard NO: call mark_quote_presented()
 
 === CRITICAL BOOKING RULES ===
 NEVER say "Your appointment is set" or "booked" or "scheduled" or "confirmed" in QUOTE context.
@@ -348,8 +349,13 @@ If you say "appointment is set" without routing to BOOK, NO APPOINTMENT EXISTS a
 CORRECT: "Great, let me get you scheduled..." -> Route to BOOK
 WRONG: "Your appointment is set for Tuesday at 4:30!" (This is a hallucination - nothing was actually booked)""",
         "valid_contexts": ["answer", "book", "goodbye", "objections"],
-        "functions": ["calculate_reverse_mortgage", "mark_quote_presented", "update_lead_info", "mark_ready_to_book"],
-        "step_criteria": "Quote presented via calculate tool, booking offered."
+        "functions": ["calculate_reverse_mortgage", "mark_quote_presented", "update_lead_info", "mark_ready_to_book", "change_context"],
+        "step_criteria": "Quote calculated and presented using calculate_reverse_mortgage()",
+        "routing": """→ If age < 62 discovered: call change_context("goodbye") (disqualify)
+→ If caller asks a question: call change_context("answer")
+→ If caller has concerns/objections: call change_context("objections")
+→ If caller says "no questions" or ready to book: call change_context("book")
+→ If hard NO / not interested: call change_context("goodbye")"""
     },
     "answer": {
         "instructions": """=== ANSWER QUESTIONS (Educational, Not Pushy) ===
@@ -366,30 +372,27 @@ GOAL: Help them understand, then gently offer next steps.
 3. Ask: "What other questions do you have?"
    WAIT for response
 
-=== ROUTING RULES ===
-- Calculation questions ("How much can I get?") → Route to QUOTE
-- Booking intent ("Let's schedule") → mark_ready_to_book → BOOK
-- Concerns/objections → Route to OBJECTIONS
-
 === AFTER ANSWERING ===
 
-If more questions: Answer them, stay in ANSWER
+If more questions: Answer them
 
 If no more questions:
   - If quote_presented=true AND not booked:
     "I can check when ${global_data.broker_name} is available. Would that be helpful?"
-    → YES: mark_ready_to_book → BOOK
-    → NO: GOODBYE
-  
-  - If not quoted yet: → Route to QUOTE
+    → YES: mark_ready_to_book()
+    → NO: end gracefully
 
 === KEY RULES ===
 - Never say "Does that make sense?" or "Does that help?" - sounds condescending
 - Ask "What other questions do you have?" instead
 - Be helpful, not salesy""",
         "valid_contexts": ["goodbye", "book", "objections", "quote"],
-        "functions": ["search_knowledge", "mark_ready_to_book"],
-        "step_criteria": "Question answered, asked about other questions. Route based on response."
+        "functions": ["search_knowledge", "mark_ready_to_book", "change_context"],
+        "step_criteria": "Caller question answered",
+        "routing": """→ If caller asks about amounts/numbers: call change_context("quote")
+→ If caller has concerns/pushback: call change_context("objections")
+→ If caller is satisfied and ready: call change_context("book")
+→ If caller says not interested: call change_context("goodbye")"""
     },
     "objections": {
         "instructions": """=== HANDLE CONCERNS (Empathetic + Convincing) ===
@@ -420,16 +423,20 @@ FEES/COSTS:
 === TRANSITION ===
 If no more concerns:
 "${global_data.broker_name} could really put your mind at ease. Want me to check their availability?"
-- YES: mark_ready_to_book → BOOK
-- Need to think: "Absolutely, take your time." → GOODBYE
+- YES: mark_ready_to_book()
+- Need to think: "Absolutely, take your time."
 
 === KEY RULES ===
 - Never say "Does that make sense?"
 - Be CONFIDENT - this is legitimate and regulated
 - Empathize first, then educate with facts""",
         "valid_contexts": ["answer", "book", "goodbye", "quote"],
-        "functions": ["search_knowledge", "mark_objection_handled", "mark_has_objection", "mark_ready_to_book"],
-        "step_criteria": "Concerns addressed with confidence. Route: resolved → BOOK, need time → GOODBYE"
+        "functions": ["search_knowledge", "mark_objection_handled", "mark_has_objection", "mark_ready_to_book", "change_context"],
+        "step_criteria": "Objection acknowledged and addressed",
+        "routing": """→ If objection resolved and caller agrees to book: call change_context("book")
+→ If caller has more questions: call change_context("answer")
+→ If caller still hesitant but open: Offer callback, then call change_context("goodbye")
+→ If hard NO: call change_context("goodbye")"""
     },
     "book": {
         "instructions": """You are in BOOK context. Your job:
@@ -469,8 +476,11 @@ If the tool fails, tell the caller and offer to have someone call them.
 CORRECT: "Let me book that for you now..." → call book_appointment → "Perfect, you're all set!"
 WRONG: "Your appointment is set!" (without calling book_appointment)""",
         "valid_contexts": ["goodbye", "answer", "objections", "quote"],
-        "functions": ["check_broker_availability", "book_appointment"],
-        "step_criteria": "Appointment booked or declined"
+        "functions": ["check_broker_availability", "book_appointment", "mark_sms_consent", "change_context"],
+        "step_criteria": "Appointment booked and confirmed",
+        "routing": """→ After appointment booked and confirmed: call change_context("goodbye")
+→ If booking fails repeatedly: call change_context("goodbye") (with manual follow-up)
+→ If caller wants to reschedule: Stay in BOOK"""
     },
     "goodbye": {
         "instructions": """You are in GOODBYE context. Your job:
@@ -501,8 +511,10 @@ CRITICAL:
 - Confirm next steps clearly
 - End naturally""",
         "valid_contexts": ["answer", "greet", "book", "objections", "quote"],
-        "functions": ["mark_handoff_complete"],
-        "step_criteria": "Said farewell and caller responded or stayed silent"
+        "functions": ["change_context"],
+        "step_criteria": "Call wrapped up with appropriate farewell",
+        "routing": """→ If caller has last-minute questions: call change_context("answer")
+→ Otherwise: End call"""
     },
     "end": {
         "instructions": "Call is ending. No action needed.",
@@ -591,13 +603,30 @@ def get_fallback_theme() -> str:
 
 
 def get_fallback_node_config(node_name: str) -> dict:
-    """Get fallback node config (for external callers)"""
-    return FALLBACK_NODE_CONFIG.get(node_name, {
+    """Get fallback node config (for external callers)
+    
+    Combines routing with instructions just like database.py does
+    """
+    config = FALLBACK_NODE_CONFIG.get(node_name, {
         "instructions": f"You are Barbara. Continue the conversation naturally in the {node_name} stage.",
         "valid_contexts": [],
-        "functions": [],
-        "step_criteria": ""
+        "functions": ["change_context"],
+        "step_criteria": "",
+        "routing": ""
     })
+    
+    # Combine routing with instructions (same as database.py)
+    instructions = config.get('instructions', '')
+    routing = config.get('routing', '')
+    if routing:
+        instructions = f"{instructions}\n\n=== ROUTING ===\n{routing}"
+    
+    return {
+        'instructions': instructions,
+        'valid_contexts': config.get('valid_contexts', []),
+        'functions': config.get('functions', []),
+        'step_criteria': config.get('step_criteria', '')
+    }
 
 
 def get_fallback_models() -> dict:
