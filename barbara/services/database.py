@@ -662,6 +662,47 @@ def insert_call_summary(
         return False
 
 
+def create_appointment(
+    lead_id: str,
+    broker_id: str,
+    appointment_time: str,
+    nylas_event_id: str,
+    sms_consent: bool = False
+) -> bool:
+    """
+    Create a new appointment record for reminders
+    """
+    if not supabase:
+        return False
+        
+    try:
+        data = {
+            "lead_id": lead_id,
+            "broker_id": broker_id,
+            "appointment_time": appointment_time,
+            "nylas_event_id": nylas_event_id,
+            "status": "scheduled",
+            "sms_consent": sms_consent,
+            # Reminders will be sent by Edge Function later (only if sms_consent=True)
+            "confirmation_sent": False,
+            "reminder_24h_sent": False,
+            "reminder_1h_sent": False
+        }
+        
+        response = supabase.table("appointments").insert(data).execute()
+        
+        if response.data:
+            logger.info(f"[DB] ✅ Created appointment record for lead {lead_id} (sms_consent={sms_consent})")
+            return True
+            
+        logger.warning(f"[DB] ⚠️ No data returned when creating appointment")
+        return False
+        
+    except Exception as e:
+        logger.error(f"[DB] ❌ Error creating appointment: {e}")
+        return False
+
+
 def insert_call_debug_log(
     call_id: str,
     event_type: Optional[str],
