@@ -279,7 +279,7 @@ Rules:
             models_for_voice = get_active_signalwire_models()
             outbound_voice = models_for_voice.get("tts_voice_string", "elevenlabs.rachel")
             self.add_post_answer_verb("play", {
-                "url": "say:This is Barbara from Equity Connect calling on a recorded line. How are you?",
+                "url": "say:Hi! This is Barbara from Equity Connect. Just so you know, this call may be recorded. How are you today?",
                 "say_voice": outbound_voice
             })
             logger.info(f"[BARBARA] Added outbound greeting with voice: {outbound_voice}")
