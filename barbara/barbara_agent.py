@@ -1401,4 +1401,9 @@ Rules:
 # Entry point
 if __name__ == "__main__":
     agent = BarbaraAgent()
-    agent.run()
+    # Bind explicitly for Fly (and other containerized environments).
+    # The SDK manual documents AGENT_HOST / AGENT_PORT as the supported env vars.
+    host = os.getenv("AGENT_HOST", "0.0.0.0")
+    port = int(os.getenv("AGENT_PORT", os.getenv("PORT", "3000")))
+    logger.info(f"[BARBARA] Starting agent on {host}:{port}")
+    agent.run(host=host, port=port)
