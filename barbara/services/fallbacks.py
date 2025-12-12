@@ -281,6 +281,12 @@ If caller says "I want to schedule", "Lets book", "Can we set up a time":
    - YES: "Great." -> call mark_age_qualified()
    - NO: "Unfortunately this program requires you to be 62 or older. Thanks for your time." -> Route to GOODBYE
    
+   IMPORTANT: We need an exact numeric age for an accurate estimate.
+   After they confirm they are 62+, ask:
+   "Great — what is your exact age?"
+   WAIT for response
+   -> call update_lead_info(age=X)
+   
    Also call: mark_homeowner_qualified() and mark_primary_residence_qualified()
 
 2. HOME VALUE (ALWAYS ASK - even if we have data in DB):
@@ -309,7 +315,7 @@ If caller says "I want to schedule", "Lets book", "Can we set up a time":
 - ALWAYS ask home value even if we have it (data may be stale)""",
         "valid_contexts": ["goodbye", "quote", "objections"],
         "functions": ["mark_age_qualified", "mark_homeowner_qualified", "mark_primary_residence_qualified", "mark_equity_qualified", "update_lead_info", "mark_ready_to_book"],
-        "step_criteria": "Age confirmed 62+, home value and mortgage collected. Route to QUOTE."
+        "step_criteria": "Age confirmed 62+ and exact numeric age captured via update_lead_info(age=X). Home value and mortgage collected. Route to QUOTE."
     },
     "quote": {
         "instructions": """=== QUOTE NODE ===
@@ -321,10 +327,12 @@ FIRST LINE (if entering fresh):
 MANDATORY: call calculate_reverse_mortgage(property_value=X, age=Y, mortgage_balance=Z)
 The tool uses real HUD PLF tables - NEVER estimate or make up numbers yourself.
 If missing any values, ask for them first.
+If you only have '62+' but not an exact age, ask for the exact age and call update_lead_info(age=X) first.
 
 === STEP 2: PRESENT RESULTS ===
 Read the tool response naturally. Then add:
 "These are preliminary estimates - ${global_data.broker_name} can confirm exact figures based on current rates."
+After presenting the estimate, call mark_quote_presented().
 
 === STEP 3: BOOKING PUSH ===
 "Would you like to schedule a quick call with ${global_data.broker_name} to go over your options?"
@@ -349,7 +357,7 @@ CORRECT: "Great, let me get you scheduled..." -> Route to BOOK
 WRONG: "Your appointment is set for Tuesday at 4:30!" (This is a hallucination - nothing was actually booked)""",
         "valid_contexts": ["answer", "book", "goodbye", "objections"],
         "functions": ["calculate_reverse_mortgage", "mark_quote_presented", "update_lead_info", "mark_ready_to_book"],
-        "step_criteria": "Quote presented via calculate tool, booking offered."
+        "step_criteria": "Quote presented via calculate tool (no estimating), mark_quote_presented() called, booking offered."
     },
     "answer": {
         "instructions": """=== ANSWER QUESTIONS (Educational, Not Pushy) ===

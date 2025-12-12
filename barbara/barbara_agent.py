@@ -109,6 +109,15 @@ class BarbaraAgent(AgentBase):
             "Role",
             "You are Barbara, a warm and professional voice assistant helping homeowners explore reverse mortgage options."
         )
+
+        # Guardrail: tool-first quoting. This is intentionally short and global (applies across contexts).
+        self.prompt_add_section(
+            "Quote Tool Rule",
+            """CRITICAL:
+- If you present any dollar-amount estimate (lump sum, monthly amount, available funds), you MUST call calculate_reverse_mortgage() first.
+- If you are missing inputs, ask for them (especially exact age and home value) and update the lead via update_lead_info(), then call calculate_reverse_mortgage().
+- After you present the quote to the caller, call mark_quote_presented()."""
+        )
         
         # Theme section - content comes from ${global_data.theme} which is set per-call
         # This allows theme to be dynamic without accumulating sections
@@ -718,7 +727,17 @@ Rules:
             step = context.add_step("main")
             step.set_text(f"${{global_data.node_instructions_{node_name}}}")
             
-            if step_criteria:
+            # Add DB-provided criteria; for QUOTE, enforce a hard "tool-first" rule even if the DB is lax.
+            if node_name == "quote":
+                quote_criteria = (step_criteria or "").strip()
+                if quote_criteria:
+                    quote_criteria += "\n\n"
+                quote_criteria += (
+                    "CRITICAL: Before presenting any dollar amounts, call calculate_reverse_mortgage(). "
+                    "Do not estimate. If inputs are missing, ask for age and home value, update_lead_info(), then calculate."
+                )
+                step.set_step_criteria(quote_criteria)
+            elif step_criteria:
                 step.set_step_criteria(step_criteria)
             
             if valid_contexts:
@@ -1128,7 +1147,9 @@ Rules:
                     "description": "Current mortgage balance to pay off (0 if home is paid off)"
                 }
             },
-            "required": ["property_value", "age"]
+            # Intentionally not required: tool will pull from the lead record when possible,
+            # and otherwise will ask for the missing inputs instead of guessing.
+            "required": []
         },
         fillers={
             "en-US": [

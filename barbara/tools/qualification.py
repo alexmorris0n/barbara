@@ -218,10 +218,11 @@ def handle_mark_equity_qualified(phone: str) -> SwaigFunctionResult:
             if fully_qualified:
                 global_updates["qualified"] = True
             
-            return (
-                SwaigFunctionResult("Equity requirement confirmed")
-                .update_global_data(global_updates)
-            )
+            result = SwaigFunctionResult("Equity requirement confirmed").update_global_data(global_updates)
+            # If the lead is fully qualified, route deterministically to QUOTE so the calculate tool is available.
+            if fully_qualified:
+                result = result.swml_change_context("quote")
+            return result
         except Exception as e:
             logger.error(f"[QUALIFY] Error marking equity qualified: {e}")
     

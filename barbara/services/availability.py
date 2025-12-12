@@ -342,7 +342,11 @@ def _format_slot_display(dt: datetime) -> str:
     """Format datetime for display: 'Tuesday Nov 26 at 2:00 PM'"""
     # NOTE: Avoid platform-specific strftime modifiers like "%-I" (fails on Windows).
     # Format "2:00 PM" by using "%I" and stripping the leading zero.
-    time_part = dt.strftime("%I:%M %p").lstrip("0")
+    time_part = dt.strftime("%I:%M %p")
+    # Only strip a single leading zero (e.g., "09:00 AM" -> "9:00 AM").
+    # Using lstrip("0") is broader than intended.
+    if time_part.startswith("0"):
+        time_part = time_part[1:]
     return f"{dt.strftime('%A %b')} {dt.day} at {time_part}"
 
 

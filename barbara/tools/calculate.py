@@ -9,9 +9,10 @@ Ported from Reference/reference-swaig-agent/tools/calculate.py
 """
 
 import logging
+from typing import Optional, Tuple
 from signalwire_agents.core.function_result import SwaigFunctionResult
 
-from services.database import update_conversation_state, normalize_phone
+from services.database import update_conversation_state, normalize_phone, get_lead_by_phone
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,49 @@ def get_plf(age: int) -> float:
     return PLF_TABLE.get(age, PLF_TABLE[99])
 
 
-def handle_calculate(phone: str, property_value: int, age: int, mortgage_balance: int = 0) -> SwaigFunctionResult:
+def _coerce_int(value) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        # Strings like "500,000" or "$500000"
+        if isinstance(value, str):
+            cleaned = "".join(ch for ch in value if ch.isdigit() or ch == "-")
+            if cleaned == "" or cleaned == "-":
+                return None
+            return int(cleaned)
+        return int(value)
+    except Exception:
+        return None
+
+
+def _fill_missing_from_lead(
+    phone: str,
+    property_value: Optional[int],
+    age: Optional[int],
+    mortgage_balance: Optional[int],
+) -> Tuple[Optional[int], Optional[int], int]:
+    """
+    Best-effort fill missing inputs from the lead record.
+    Returns (property_value, age, mortgage_balance) where mortgage_balance is always an int.
+    """
+    lead = get_lead_by_phone(phone)
+    if lead:
+        if property_value is None:
+            property_value = _coerce_int(lead.get("property_value"))
+        if age is None:
+            age = _coerce_int(lead.get("age"))
+        if mortgage_balance is None:
+            mortgage_balance = _coerce_int(lead.get("mortgage_balance"))
+    mb = _coerce_int(mortgage_balance)
+    return property_value, age, max(0, mb or 0)
+
+
+def handle_calculate(
+    phone: str,
+    property_value: Optional[int] = None,
+    age: Optional[int] = None,
+    mortgage_balance: Optional[int] = 0,
+) -> SwaigFunctionResult:
     """
     Calculate available reverse mortgage funds using HECM formula.
     
@@ -63,10 +106,24 @@ def handle_calculate(phone: str, property_value: int, age: int, mortgage_balance
         SwaigFunctionResult with calculated amounts
     """
     phone = normalize_phone(phone)
-    
-    if not property_value or not age:
+
+    # Coerce + fill from lead if possible (so the AI can call the tool without perfect args)
+    property_value = _coerce_int(property_value)
+    age = _coerce_int(age)
+    mortgage_balance = _coerce_int(mortgage_balance)
+    property_value, age, mortgage_balance = _fill_missing_from_lead(phone, property_value, age, mortgage_balance)
+
+    missing = []
+    if not property_value:
+        missing.append("home value")
+    if not age:
+        missing.append("age (youngest homeowner)")
+    if missing:
+        # Be explicit: we do not estimate without required inputs.
+        missing_text = " and ".join(missing) if len(missing) <= 2 else ", ".join(missing[:-1]) + f", and {missing[-1]}"
         return SwaigFunctionResult(
-            "I need both property value and age to calculate. Could you provide those?"
+            f"I can calculate an accurate estimate, but I need your {missing_text}. "
+            "What is your age, and what would you estimate the home is worth today?"
         )
     
     # Validate inputs
@@ -80,10 +137,8 @@ def handle_calculate(phone: str, property_value: int, age: int, mortgage_balance
             "Please provide a valid property value."
         )
     
-    # Ensure mortgage_balance is a valid number
-    if mortgage_balance is None:
-        mortgage_balance = 0
-    mortgage_balance = max(0, int(mortgage_balance))
+    # Ensure mortgage_balance is a valid number (already normalized, but keep defensive)
+    mortgage_balance = max(0, int(mortgage_balance or 0))
     
     # ===== HECM CALCULATION =====
     

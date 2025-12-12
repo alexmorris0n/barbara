@@ -284,7 +284,11 @@ def handle_booking(phone: str, preferred_time: str, notes: str = None) -> SwaigF
     tz = pytz.timezone(broker_tz)
     appointment_dt = datetime.fromtimestamp(start_unix, tz=tz)
     # NOTE: Avoid platform-specific strftime modifiers like "%-I" (fails on Windows).
-    time_part = appointment_dt.strftime("%I:%M %p").lstrip("0")
+    time_part = appointment_dt.strftime("%I:%M %p")
+    # Only strip a single leading zero (e.g., "09:00 AM" -> "9:00 AM").
+    # Using lstrip("0") is broader than intended.
+    if time_part.startswith("0"):
+        time_part = time_part[1:]
     friendly_time = f"{appointment_dt.strftime('%A, %B')} {appointment_dt.day} at {time_part}"
     
     # Get SMS consent from conversation state (needed for appointment record)
