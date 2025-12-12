@@ -1187,6 +1187,32 @@ Rules:
         preferred_time = args.get("preferred_time")
         return handle_check_broker_availability(phone, preferred_date, preferred_time)
     
+    # ----- CONTEXT NAVIGATION -----
+    
+    @AgentBase.tool(
+        name="change_context",
+        description="Switch to a different conversation context. Use this to navigate between conversation stages.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "context_name": {
+                    "type": "string",
+                    "description": "Name of the context to switch to (e.g., 'verify', 'qualify', 'quote', 'answer', 'objections', 'book', 'goodbye')",
+                    "enum": ["greet", "verify", "qualify", "quote", "answer", "objections", "book", "goodbye"]
+                }
+            },
+            "required": ["context_name"]
+        }
+    )
+    def change_context(self, args, raw_data):
+        """
+        Per SDK Section 8.993: Use .swml_change_context() to switch to a named SWML context.
+        This allows explicit AI-controlled context transitions.
+        """
+        context_name = args.get("context_name", "")
+        logger.info(f"[BARBARA] change_context called: switching to '{context_name}'")
+        return SwaigFunctionResult(f"Switching to {context_name}").swml_change_context(context_name)
+    
     # ----- LEAD TOOLS -----
     
     @AgentBase.tool(
