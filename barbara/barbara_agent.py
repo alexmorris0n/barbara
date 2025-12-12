@@ -168,12 +168,9 @@ Has Objection: ${global_data.has_objection}
 Name: ${global_data.broker_name}
 Company: ${global_data.broker_company}
 
-=== AVAILABLE APPOINTMENT SLOTS ===
-Next Available: ${global_data.next_available_slot}
-All Available Slots:
-${global_data.available_slots_display}
-
-When booking, offer the next available slot first. If they need a different time, offer alternatives from the list above.
+=== BOOKING ===
+Broker: ${global_data.broker_name}
+When ready to book, call check_broker_availability() to get real-time available slots.
 """
         )
         
@@ -323,6 +320,9 @@ Rules:
         
         logger.info(f"[BARBARA] Call direction: {direction}, phone: {caller_num} (normalized: {phone})")
         
+        # Load models ONCE early - used for voice config and AI params
+        models = get_active_signalwire_models()
+        
         # CRITICAL: Store call_direction in conversation_state so it persists to on_summary
         # This fixes the bug where outbound calls were being logged as "inbound"
         if phone and phone != "unknown":
@@ -347,8 +347,7 @@ Rules:
         # This plays BEFORE the AI loads, filling the silence gap
         # Prevents leads from saying "Hello?" multiple times and hanging up
         if direction == "outbound":
-            models_for_voice = get_active_signalwire_models()
-            outbound_voice = models_for_voice.get("tts_voice_string", "elevenlabs.rachel")
+            outbound_voice = models.get("tts_voice_string", "elevenlabs.rachel")
             self.add_post_answer_verb("play", {
                 "url": "say:Hi! This is Barbara from Equity Connect. Just so you know, this call may be recorded. How are you today?",
                 "say_voice": outbound_voice
@@ -371,7 +370,7 @@ Rules:
         
         state = get_conversation_state(phone)
         theme_prompt = get_theme_prompt("reverse_mortgage")
-        models = get_active_signalwire_models()
+        # models already loaded earlier
         
         # Sync lead status to conversation_state on call start
         if lead:
@@ -409,14 +408,8 @@ Rules:
         broker_company = broker.get('company_name', '') if broker else ''
         broker_phone = broker.get('primary_phone_e164', '') if broker else ''  # E.164 for transfers
         
-        # Fetch broker availability (sync call to Nylas or generate from business hours)
-        # This pre-loads slots so LLM can offer them immediately in BOOK node
-        available_slots = []
-        available_slots_display = "No slots available"
-        if broker:
-            available_slots = fetch_broker_availability(broker, days_ahead=5, max_slots=10)
-            available_slots_display = format_slots_for_llm(available_slots, max_display=5)
-            logger.info(f"[BARBARA] Fetched {len(available_slots)} available slots for broker {broker_name}")
+        # REMOVED: Broker availability fetch was causing slow SWML response (~1-2s)
+        # The BOOK node now calls check_broker_availability() for real-time lookup
         
         self.set_global_data({
             # Caller identity
@@ -468,11 +461,7 @@ Rules:
             "broker_name": broker_name,
             "broker_company": broker_company,
             "broker_phone": broker_phone,  # E.164 format for .connect() transfers
-            
-            # Availability (pre-fetched for instant booking)
-            "available_slots": available_slots,  # Full slot data for booking
-            "available_slots_display": available_slots_display,  # Formatted for LLM to read aloud
-            "next_available_slot": available_slots[0]['display'] if available_slots else "No slots available",
+            # NOTE: Availability removed - use check_broker_availability() tool in BOOK node
             
             # Call info
             "call_direction": direction,
