@@ -110,6 +110,64 @@ class BarbaraAgent(AgentBase):
             "You are Barbara, a warm and professional voice assistant helping homeowners explore reverse mortgage options."
         )
         
+        # Theme section - content comes from ${global_data.theme} which is set per-call
+        # This allows theme to be dynamic without accumulating sections
+        self.prompt_add_section("Theme", "${global_data.theme}")
+        
+        # Caller Context section - uses ${global_data.X} placeholders that SignalWire resolves at runtime
+        # IMPORTANT: Add this ONCE in __init__, not in on_swml_request
+        # The values come from set_global_data() which IS called per-request
+        # Per SDK Section 6.16.2.4: Use ${global_data.key} in prompts
+        self.prompt_add_section(
+            "Caller Context",
+            """You are speaking with ${global_data.caller_name} (phone: ${global_data.caller_phone}).
+
+=== CAMPAIGN INFO ===
+Persona (who sent email): ${global_data.persona_name}
+Caller's Goal: ${global_data.caller_goal}
+
+=== PROPERTY INFO ===
+Address: ${global_data.property_address}
+City: ${global_data.property_city}, ${global_data.property_state} ${global_data.property_zip}
+Estimated Value: ${global_data.property_value}
+Mortgage Balance: ${global_data.mortgage_balance}
+Estimated Equity: ${global_data.estimated_equity}
+Age: ${global_data.caller_age}
+
+=== VERIFICATION STATUS ===
+Phone Verified: ${global_data.phone_verified}
+Email Verified: ${global_data.email_verified}
+Address Verified: ${global_data.address_verified}
+Fully Verified: ${global_data.verified}
+
+=== QUALIFICATION STATUS ===
+Age 62+ Qualified: ${global_data.age_qualified}
+Homeowner Qualified: ${global_data.homeowner_qualified}
+Primary Residence Qualified: ${global_data.primary_residence_qualified}
+Equity Qualified: ${global_data.equity_qualified}
+Fully Qualified: ${global_data.qualified}
+
+=== CONVERSATION STATUS ===
+Greeted: ${global_data.greeted}
+Quote Presented: ${global_data.quote_presented}
+Ready to Book: ${global_data.ready_to_book}
+Appointment Booked: ${global_data.appointment_booked}
+Wrong Person: ${global_data.wrong_person}
+Has Objection: ${global_data.has_objection}
+
+=== ASSIGNED BROKER ===
+Name: ${global_data.broker_name}
+Company: ${global_data.broker_company}
+
+=== AVAILABLE APPOINTMENT SLOTS ===
+Next Available: ${global_data.next_available_slot}
+All Available Slots:
+${global_data.available_slots_display}
+
+When booking, offer the next available slot first. If they need a different time, offer alternatives from the list above.
+"""
+        )
+        
         # Add math skill per Section 5.18.3
         # Provides: calculate - Evaluate mathematical expressions
         self.add_skill("math")
@@ -209,10 +267,9 @@ Rules:
         self.clear_pre_answer_verbs()
         self.clear_post_answer_verbs()
         
-        # CRITICAL: Clear prompt sections from previous requests
-        # Per SDK docs: "Clear prompts between calls - Use self.pom.clear() if reusing sections"
-        # Without this, Theme and Caller Context accumulate on each call until SWML is too large
-        self.pom.clear()
+        # NOTE: Prompt sections (Caller Context) are added in __init__ with ${global_data.X} placeholders
+        # that SignalWire resolves at runtime. Theme is added once via _theme_section_added flag.
+        # This prevents section accumulation without needing pom.clear() (which doesn't exist in SDK).
         
         # Extract call data from SignalWire request
         call_data = request_data.get("call", {})
@@ -412,63 +469,10 @@ Rules:
             "call_direction": direction,
             "lead_id": lead.get('id', '') if lead else '',
             "lead_status": lead.get('status', 'new') if lead else 'new',
+            
+            # Theme (loaded from DB, can vary per vertical)
+            "theme": theme_prompt or '',
         })
-        
-        # Set theme prompt
-        if theme_prompt:
-            self.prompt_add_section("Theme", theme_prompt)
-        
-        # Add caller context using global_data variables
-        # Per SDK Section 6.16.2.4: Use ${global_data.key} in prompts
-        self.prompt_add_section(
-            "Caller Context",
-            """You are speaking with ${global_data.caller_name} (phone: ${global_data.caller_phone}).
-
-=== CAMPAIGN INFO ===
-Persona (who sent email): ${global_data.persona_name}
-Caller's Goal: ${global_data.caller_goal}
-
-=== PROPERTY INFO ===
-Address: ${global_data.property_address}
-City: ${global_data.property_city}, ${global_data.property_state} ${global_data.property_zip}
-Estimated Value: ${global_data.property_value}
-Mortgage Balance: ${global_data.mortgage_balance}
-Estimated Equity: ${global_data.estimated_equity}
-Age: ${global_data.caller_age}
-
-=== VERIFICATION STATUS ===
-Phone Verified: ${global_data.phone_verified}
-Email Verified: ${global_data.email_verified}
-Address Verified: ${global_data.address_verified}
-Fully Verified: ${global_data.verified}
-
-=== QUALIFICATION STATUS ===
-Age 62+ Qualified: ${global_data.age_qualified}
-Homeowner Qualified: ${global_data.homeowner_qualified}
-Primary Residence Qualified: ${global_data.primary_residence_qualified}
-Equity Qualified: ${global_data.equity_qualified}
-Fully Qualified: ${global_data.qualified}
-
-=== CONVERSATION STATUS ===
-Greeted: ${global_data.greeted}
-Quote Presented: ${global_data.quote_presented}
-Ready to Book: ${global_data.ready_to_book}
-Appointment Booked: ${global_data.appointment_booked}
-Wrong Person: ${global_data.wrong_person}
-Has Objection: ${global_data.has_objection}
-
-=== ASSIGNED BROKER ===
-Name: ${global_data.broker_name}
-Company: ${global_data.broker_company}
-
-=== AVAILABLE APPOINTMENT SLOTS ===
-Next Available: ${global_data.next_available_slot}
-All Available Slots:
-${global_data.available_slots_display}
-
-When booking, offer the next available slot first. If they need a different time, offer alternatives from the list above.
-"""
-        )
         
         # Configure AI models from database
         # Per Section 3.21 (AI Parameters)
