@@ -351,11 +351,16 @@ Rules:
         # This plays BEFORE the AI loads, filling the silence gap
         # Prevents leads from saying "Hello?" multiple times and hanging up
         if direction == "outbound":
-            outbound_voice = models.get("tts_voice_string", "elevenlabs.rachel")
+            # Re-fetch models specifically for the outbound greeting so the greeting voice
+            # tracks the latest DB config even if other parts of request handling reuse a
+            # previously loaded snapshot.
+            models_for_voice = get_active_signalwire_models()
+            outbound_voice = models_for_voice.get("tts_voice_string", "elevenlabs.rachel")
             self.add_post_answer_verb("play", {
                 # Per SDK manual: play supports "url" with "say:" or a media URL.
                 # Avoid non-standard keys here; incorrect verb schema can produce dead air.
-                "url": "say:Hi! This is Barbara from Equity Connect. Just so you know, this call may be recorded. How are you today?"
+                "url": "say:Hi! This is Barbara from Equity Connect. Just so you know, this call may be recorded. How are you today?",
+                "say_voice": outbound_voice
             })
             logger.info(f"[BARBARA] Added outbound greeting with voice: {outbound_voice}")
         
