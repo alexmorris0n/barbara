@@ -46,6 +46,7 @@ def fetch_broker_availability(
         return []
     
     nylas_grant_id = broker.get('nylas_grant_id')
+    broker_email = (broker.get('email') or '').strip() if isinstance(broker.get('email'), str) else ''
     broker_tz_name = broker.get('timezone', 'America/Los_Angeles')
     
     # Get broker business hours with defaults
@@ -89,9 +90,11 @@ def fetch_broker_availability(
     end_unix = int(end_dt.timestamp())
     
     # Try Nylas API if available
-    if nylas_grant_id and httpx and NYLAS_API_KEY:
+    # Nylas v3 free/busy requires at least one email in the request body.
+    if nylas_grant_id and broker_email and httpx and NYLAS_API_KEY:
         slots = _fetch_from_nylas(
             nylas_grant_id=nylas_grant_id,
+            broker_email=broker_email,
             start_unix=start_unix,
             end_unix=end_unix,
             broker_tz_name=broker_tz_name,
@@ -107,6 +110,8 @@ def fetch_broker_availability(
     else:
         if not nylas_grant_id:
             logger.warning("[AVAILABILITY] Broker nylas_grant_id missing - using generated slots")
+        elif not broker_email:
+            logger.warning("[AVAILABILITY] Broker email missing - cannot query Nylas free/busy, using generated slots")
         else:
             logger.info("[AVAILABILITY] Nylas not configured (missing API key), using generated slots")
     
@@ -125,6 +130,7 @@ def fetch_broker_availability(
 
 def _fetch_from_nylas(
     nylas_grant_id: str,
+    broker_email: str,
     start_unix: int,
     end_unix: int,
     broker_tz_name: str,
@@ -142,6 +148,8 @@ def _fetch_from_nylas(
         request_body = {
             "start_time": start_unix,
             "end_time": end_unix,
+            # Nylas v3 free/busy requires at least one email. Use the broker's email on file.
+            "emails": [broker_email],
         }
         
         with httpx.Client(timeout=5.0) as client:
@@ -164,8 +172,12 @@ def _fetch_from_nylas(
         # Free-busy returns busy periods in data[].time_slots[]
         # We need to extract busy times and filter them from generated slots
         busy_periods = []
-        for calendar_data in data.get('data', []):
-            for busy_slot in calendar_data.get('time_slots', []):
+        for calendar_data in (data.get('data') or []):
+            if not isinstance(calendar_data, dict):
+                continue
+            for busy_slot in (calendar_data.get('time_slots') or []):
+                if not isinstance(busy_slot, dict):
+                    continue
                 busy_start = busy_slot.get('start_time')
                 busy_end = busy_slot.get('end_time')
                 if busy_start and busy_end:
@@ -328,7 +340,10 @@ def _generate_slots(
 
 def _format_slot_display(dt: datetime) -> str:
     """Format datetime for display: 'Tuesday Nov 26 at 2:00 PM'"""
-    return dt.strftime("%A %b %d at %-I:%M %p")
+    # NOTE: Avoid platform-specific strftime modifiers like "%-I" (fails on Windows).
+    # Format "2:00 PM" by using "%I" and stripping the leading zero.
+    time_part = dt.strftime("%I:%M %p").lstrip("0")
+    return f"{dt.strftime('%A %b')} {dt.day} at {time_part}"
 
 
 def filter_slots_by_time_of_day(slots: List[Dict[str, Any]], time_preference: str, broker_tz_name: str = 'America/Los_Angeles') -> List[Dict[str, Any]]:

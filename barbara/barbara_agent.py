@@ -733,6 +733,32 @@ Rules:
         # define_contexts() does NOT have set_default_context() method.
         
         logger.info(f"[BARBARA] Built {len(ALL_NODES)} contexts (first/default: greet)")
+
+    def _extract_tool_phone(self, raw_data: Dict[str, Any]) -> str:
+        """
+        Extract the lead/caller phone from SWAIG raw_data.
+
+        - Production SWAIG commonly provides `caller_id_num`
+        - `swaig-test` commonly provides `call.from` / `call.to`
+        """
+        if not isinstance(raw_data, dict):
+            return ""
+
+        phone = raw_data.get("caller_id_num") or raw_data.get("caller_number")
+        if phone:
+            return phone
+
+        call = raw_data.get("call") or {}
+        if not isinstance(call, dict):
+            call = {}
+
+        direction = (call.get("direction") or raw_data.get("direction") or "").lower()
+
+        # For outbound calls, the lead is the "to" number. For inbound, the lead is the "from" number.
+        if direction == "outbound":
+            return call.get("to") or call.get("to_number") or ""
+
+        return call.get("from") or call.get("from_number") or ""
     
     # =========================================================================
     # TOOLS - Per Section 4.14 (The @tool Decorator)
@@ -759,7 +785,7 @@ Rules:
         }
     )
     def mark_greeted(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         greeted = args.get("greeted", True)
         reason_summary = args.get("reason_summary")
         return handle_mark_greeted(phone, greeted, reason_summary)
@@ -783,7 +809,7 @@ Rules:
         }
     )
     def set_caller_goal(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         goal = args.get("goal", "")
         goal_details = args.get("goal_details", "")
         return handle_set_caller_goal(phone, goal, goal_details)
@@ -802,7 +828,7 @@ Rules:
         }
     )
     def mark_verified(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         verified = args.get("verified", True)
         return handle_mark_verified(phone, verified)
     
@@ -821,7 +847,7 @@ Rules:
         }
     )
     def mark_qualified(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         qualified = args.get("qualified")
         return handle_mark_qualified(phone, qualified)
     
@@ -844,7 +870,7 @@ Rules:
         }
     )
     def mark_qualification_result(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         qualified = args.get("qualified")
         reason = args.get("reason")
         return handle_mark_qualification_result(phone, qualified, reason)
@@ -858,7 +884,7 @@ Rules:
         }
     )
     def mark_quote_presented(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         return handle_mark_quote_presented(phone)
     
     @AgentBase.tool(
@@ -875,7 +901,7 @@ Rules:
         }
     )
     def mark_ready_to_book(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         ready_to_book = args.get("ready_to_book", True)
         return handle_mark_ready_to_book(phone, ready_to_book)
     
@@ -897,7 +923,7 @@ Rules:
         }
     )
     def mark_wrong_person(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         wrong_person = args.get("wrong_person", True)
         right_person_available = args.get("right_person_available")
         return handle_mark_wrong_person(phone, wrong_person, right_person_available)
@@ -917,7 +943,7 @@ Rules:
         }
     )
     def mark_handoff_complete(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         new_person_name = args.get("new_person_name")
         return handle_mark_handoff_complete(phone, new_person_name)
     
@@ -939,7 +965,7 @@ Rules:
         }
     )
     def mark_has_objection(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         has_objection = args.get("has_objection", True)
         objection_type = args.get("objection_type")
         return handle_mark_has_objection(phone, has_objection, objection_type)
@@ -958,7 +984,7 @@ Rules:
         }
     )
     def mark_objection_handled(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         objection_handled = args.get("objection_handled", True)
         return handle_mark_objection_handled(phone, objection_handled)
     
@@ -977,7 +1003,7 @@ Rules:
         }
     )
     def mark_sms_consent(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         sms_consent = args.get("sms_consent")
         return handle_mark_sms_consent(phone, sms_consent)
     
@@ -992,7 +1018,7 @@ Rules:
         }
     )
     def mark_phone_verified(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         return handle_mark_phone_verified(phone)
     
     @AgentBase.tool(
@@ -1004,7 +1030,7 @@ Rules:
         }
     )
     def mark_email_verified(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         return handle_mark_email_verified(phone)
     
     @AgentBase.tool(
@@ -1026,7 +1052,7 @@ Rules:
         }
     )
     def mark_address_verified(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         call_direction = args.get("call_direction")
         new_address = args.get("new_address")
         return handle_mark_address_verified(phone, call_direction, new_address)
@@ -1042,7 +1068,7 @@ Rules:
         }
     )
     def mark_age_qualified(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         return handle_mark_age_qualified(phone)
     
     @AgentBase.tool(
@@ -1054,7 +1080,7 @@ Rules:
         }
     )
     def mark_homeowner_qualified(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         return handle_mark_homeowner_qualified(phone)
     
     @AgentBase.tool(
@@ -1066,7 +1092,7 @@ Rules:
         }
     )
     def mark_primary_residence_qualified(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         return handle_mark_primary_residence_qualified(phone)
     
     @AgentBase.tool(
@@ -1078,7 +1104,7 @@ Rules:
         }
     )
     def mark_equity_qualified(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         return handle_mark_equity_qualified(phone)
     
     # ----- CALCULATION TOOL -----
@@ -1113,7 +1139,7 @@ Rules:
         }
     )
     def calculate_reverse_mortgage(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         property_value = args.get("property_value")
         age = args.get("age")
         mortgage_balance = args.get("mortgage_balance", 0)
@@ -1143,7 +1169,7 @@ Rules:
         }
     )
     def search_knowledge(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         query = args.get("query")
         return handle_knowledge_search(phone, query)
     
@@ -1175,7 +1201,7 @@ Rules:
         }
     )
     def book_appointment(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         preferred_time = args.get("preferred_time")
         notes = args.get("notes")
         return handle_booking(phone, preferred_time, notes)
@@ -1205,7 +1231,7 @@ Rules:
         }
     )
     def check_broker_availability(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         preferred_date = args.get("preferred_date")
         preferred_time = args.get("preferred_time")
         return handle_check_broker_availability(phone, preferred_date, preferred_time)
@@ -1260,7 +1286,7 @@ Rules:
         }
     )
     def verify_caller_identity(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         first_name = args.get("first_name")
         return handle_verify_caller_identity(phone, first_name)
     
@@ -1314,7 +1340,7 @@ Rules:
         }
     )
     def update_lead_info(self, args, raw_data):
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         return handle_update_lead_info(
             phone,
             first_name=args.get("first_name"),
@@ -1356,7 +1382,7 @@ Rules:
         Per SDK Section 6.18: Transfer calls using .connect()
         Uses final=True for permanent handoff to broker
         """
-        phone = raw_data.get("caller_id_num", "")
+        phone = self._extract_tool_phone(raw_data)
         reason = args.get("reason", "customer_request")
         
         # Get broker info from global_data (set in on_swml_request)

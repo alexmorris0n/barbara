@@ -25,7 +25,8 @@ from services.database import (
     get_conversation_state,
     update_conversation_state,
     normalize_phone,
-    create_appointment
+    create_appointment,
+    update_appointment,
 )
 
 logger = logging.getLogger(__name__)
@@ -95,20 +96,83 @@ def _parse_appointment_time(preferred_time: str, broker_tz_name: str = 'America/
     
     Returns: (start_unix, end_unix) or (None, None) on error
     """
+    import re
     import pytz
+    from datetime import datetime, timedelta, time as dtime
     from dateutil import parser as date_parser
     
     try:
         broker_tz = pytz.timezone(broker_tz_name)
+        now = datetime.now(tz=broker_tz)
         
         # Check if it's a Unix timestamp
         if preferred_time.isdigit():
             start_unix = int(preferred_time)
             end_unix = start_unix + (duration_minutes * 60)
             return start_unix, end_unix
+
+        raw = preferred_time.strip()
+        lower = raw.lower()
+
+        # Handle common relative-date phrasing (dateutil does not parse "tomorrow"/"next friday")
+        base_date = None
+
+        if re.search(r"\btomorrow\b", lower):
+            base_date = (now + timedelta(days=1)).date()
+        elif re.search(r"\btoday\b", lower):
+            base_date = now.date()
+        else:
+            weekday_map = {
+                "monday": 0,
+                "tuesday": 1,
+                "wednesday": 2,
+                "thursday": 3,
+                "friday": 4,
+                "saturday": 5,
+                "sunday": 6,
+            }
+            for name, idx in weekday_map.items():
+                if re.search(rf"\b(next\s+)?{name}\b", lower):
+                    is_next = bool(re.search(rf"\bnext\s+{name}\b", lower))
+                    days_ahead = (idx - now.weekday()) % 7
+                    if days_ahead == 0:
+                        days_ahead = 7
+                    if is_next:
+                        days_ahead += 7
+                    base_date = (now + timedelta(days=days_ahead)).date()
+                    break
+
+        if base_date is not None:
+            # Extract time of day from phrase
+            if re.search(r"\bnoon\b", lower):
+                hour, minute = 12, 0
+            elif re.search(r"\bmidnight\b", lower):
+                hour, minute = 0, 0
+            else:
+                m = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", lower)
+                if not m:
+                    return None, None
+                hour = int(m.group(1))
+                minute = int(m.group(2) or "0")
+                ampm = m.group(3)
+                if hour == 12:
+                    hour = 0
+                if ampm == "pm":
+                    hour += 12
+
+            dt = broker_tz.localize(datetime.combine(base_date, dtime(hour=hour, minute=minute)))
+
+            # If it's in the past (e.g., "today 9am" but it's already afternoon), push to next week/day.
+            if dt <= now and re.search(r"\btoday\b", lower):
+                return None, None
+
+            start_unix = int(dt.timestamp())
+            end_unix = start_unix + (duration_minutes * 60)
+            return start_unix, end_unix
         
         # Try to parse as datetime
-        dt = date_parser.parse(preferred_time)
+        # Provide a default so missing year/month/day components resolve in broker timezone.
+        dt = date_parser.parse(preferred_time, default=now.replace(second=0, microsecond=0), fuzzy=True)
         
         # If no timezone, assume broker's timezone
         if dt.tzinfo is None:
@@ -219,15 +283,46 @@ def handle_booking(phone: str, preferred_time: str, notes: str = None) -> SwaigF
     import pytz
     tz = pytz.timezone(broker_tz)
     appointment_dt = datetime.fromtimestamp(start_unix, tz=tz)
-    friendly_time = appointment_dt.strftime("%A, %B %d at %-I:%M %p")
+    # NOTE: Avoid platform-specific strftime modifiers like "%-I" (fails on Windows).
+    time_part = appointment_dt.strftime("%I:%M %p").lstrip("0")
+    friendly_time = f"{appointment_dt.strftime('%A, %B')} {appointment_dt.day} at {time_part}"
     
+    # Get SMS consent from conversation state (needed for appointment record)
+    state = get_conversation_state(phone)
+    sms_consent = state.get('conversation_data', {}).get('sms_consent', False) if state else False
+
+    # Create appointment record FIRST to stop race with webhook
+    # We'll embed its UUID into the Nylas event description so the webhook can map the event deterministically.
+    appointment_row = None
+    appointment_id = None
+    try:
+        appointment_row = create_appointment(
+            lead_id=lead_id,
+            broker_id=broker_id,
+            appointment_time=appointment_dt.isoformat(),
+            nylas_event_id=None,
+            sms_consent=sms_consent,
+            status="scheduling",
+        )
+        appointment_id = appointment_row.get("id") if appointment_row else None
+    except Exception as e:
+        logger.error(f"[BOOKING] Failed to create pre-book appointment record: {e}")
+
     # Create Nylas v3 event - requires timezone in 'when' object
     lead_name = f"{lead.get('first_name', '')} {lead.get('last_name', '')}".strip() or "Client"
     lead_email = lead.get('primary_email', '')
     
+    marker = f"ECG_APPOINTMENT_ID={appointment_id}" if appointment_id else "ECG_APPOINTMENT_ID=unknown"
+
     event_data = {
         "title": f"Reverse Mortgage Consultation - {lead_name}",
-        "description": f"Reverse mortgage consultation call.\n\nLead Phone: {phone}\nNotes: {notes or 'None'}",
+        "description": (
+            "Reverse mortgage consultation call.\n"
+            f"{marker}\n"
+            "ECG_SOURCE=barbara_agent\n\n"
+            f"Lead Phone: {phone}\n"
+            f"Notes: {notes or 'None'}"
+        ),
         "busy": True,
         "when": {
             "start_time": start_unix,
@@ -293,10 +388,27 @@ def handle_booking(phone: str, preferred_time: str, notes: str = None) -> SwaigF
             })
             
             logger.info(f"[BOOKING] Appointment created: {event_id} for {phone} at {friendly_time}")
-            
-            # Get SMS consent from conversation state
-            state = get_conversation_state(phone)
-            sms_consent = state.get('conversation_data', {}).get('sms_consent', False) if state else False
+
+            # Update appointment record with Nylas event id (stop race + enable webhook idempotency)
+            try:
+                if appointment_id:
+                    update_appointment(
+                        appointment_id,
+                        {"nylas_event_id": event_id, "status": "scheduled"}
+                    )
+                else:
+                    # Fallback: if we failed to create pre-book record, create it now (legacy behavior)
+                    appointment_row2 = create_appointment(
+                        lead_id=lead_id,
+                        broker_id=broker_id,
+                        appointment_time=appointment_dt.isoformat(),
+                        nylas_event_id=event_id,
+                        sms_consent=sms_consent,
+                        status="scheduled",
+                    )
+                    appointment_id = appointment_row2.get("id") if appointment_row2 else None
+            except Exception as e:
+                logger.error(f"[BOOKING] Failed to update/create appointment record: {e}")
             
             # Trigger n8n to send personalized SMS from persona (with delay)
             # Only sends if sms_consent=True
@@ -311,18 +423,6 @@ def handle_booking(phone: str, preferred_time: str, notes: str = None) -> SwaigF
                 appointment_iso=appointment_dt.isoformat(),
                 sms_consent=sms_consent
             )
-            
-            # Create appointment record for reminders (sync)
-            try:
-                create_appointment(
-                    lead_id=lead_id,
-                    broker_id=broker_id,
-                    appointment_time=appointment_dt.isoformat(),
-                    nylas_event_id=event_id,
-                    sms_consent=sms_consent
-                )
-            except Exception as e:
-                logger.error(f"[BOOKING] Failed to create appointment record: {e}")
             
             # Per Section 6.16.2.3: Update global_data so AI sees booking is complete
             return (

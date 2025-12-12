@@ -59,6 +59,11 @@ def get_lead_by_phone(phone: str) -> Optional[Dict[str, Any]]:
         return None
         
     normalized = normalize_phone(phone)
+    if not normalized:
+        # Guardrail: never query with an empty/invalid phone, or we can match arbitrary leads
+        # (e.g., ilike '%%' would match the first row).
+        logger.warning("[DB] get_lead_by_phone called with empty/invalid phone - skipping lookup")
+        return None
     # Also build E.164 format for matching primary_phone_e164 field
     e164_format = f"+1{normalized}" if not normalized.startswith('+') else normalized
     
@@ -680,41 +685,95 @@ def create_appointment(
     lead_id: str,
     broker_id: str,
     appointment_time: str,
-    nylas_event_id: str,
-    sms_consent: bool = False
-) -> bool:
+    nylas_event_id: Optional[str] = None,
+    sms_consent: bool = False,
+    status: str = "scheduled",
+) -> Optional[Dict[str, Any]]:
     """
-    Create a new appointment record for reminders
+    Create a new appointment record (used for reminders + email confirmation idempotency).
+
+    Returns the created row (including its UUID id) on success; otherwise None.
     """
     if not supabase:
-        return False
-        
+        return None
+
     try:
-        data = {
+        data: Dict[str, Any] = {
             "lead_id": lead_id,
             "broker_id": broker_id,
             "appointment_time": appointment_time,
-            "nylas_event_id": nylas_event_id,
-            "status": "scheduled",
+            "status": status,
             "sms_consent": sms_consent,
-            # Reminders will be sent by Edge Function later (only if sms_consent=True)
+            # Reminders/confirmations will be sent by Edge Function later
             "confirmation_sent": False,
             "reminder_24h_sent": False,
-            "reminder_1h_sent": False
+            "reminder_1h_sent": False,
         }
-        
+
+        if nylas_event_id:
+            data["nylas_event_id"] = nylas_event_id
+
         response = supabase.table("appointments").insert(data).execute()
-        
-        if response.data:
-            logger.info(f"[DB] ✅ Created appointment record for lead {lead_id} (sms_consent={sms_consent})")
-            return True
-            
-        logger.warning(f"[DB] ⚠️ No data returned when creating appointment")
-        return False
-        
+
+        if response.data and len(response.data) > 0:
+            row = response.data[0]
+            logger.info(
+                f"[DB] ✅ Created appointment record id={row.get('id')} for lead {lead_id} "
+                f"(status={status}, sms_consent={sms_consent})"
+            )
+            return row
+
+        logger.warning("[DB] ⚠️ No data returned when creating appointment")
+        return None
+
     except Exception as e:
-        logger.error(f"[DB] ❌ Error creating appointment: {e}")
+        logger.error(f"[DB] ❌ Error creating appointment: {e}", exc_info=True)
+        return None
+
+
+def update_appointment(appointment_id: str, updates: Dict[str, Any]) -> bool:
+    """
+    Update an appointment record by ID.
+    """
+    if not supabase:
         return False
+
+    if not appointment_id:
+        return False
+
+    try:
+        response = supabase.table("appointments").update(updates).eq("id", appointment_id).execute()
+        return bool(response.data)
+    except Exception as e:
+        logger.error(f"[DB] ❌ Error updating appointment {appointment_id}: {e}", exc_info=True)
+        return False
+
+
+def get_appointment_by_nylas_event_id(nylas_event_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Get the oldest appointment row matching a given Nylas event id.
+    (Defensive against duplicates.)
+    """
+    if not supabase:
+        return None
+    if not nylas_event_id:
+        return None
+
+    try:
+        response = (
+            supabase.table("appointments")
+            .select("*")
+            .eq("nylas_event_id", nylas_event_id)
+            .order("created_at", desc=False)
+            .limit(1)
+            .execute()
+        )
+        if response.data and len(response.data) > 0:
+            return response.data[0]
+        return None
+    except Exception as e:
+        logger.error(f"[DB] ❌ Error fetching appointment for nylas_event_id={nylas_event_id}: {e}", exc_info=True)
+        return None
 
 
 def insert_call_debug_log(

@@ -178,7 +178,6 @@ def handle_update_lead_info(
         updates['age'] = age
     if property_value is not None:
         updates['property_value'] = property_value
-        updates['estimated_property_value'] = property_value  # Alias
     if estimated_equity is not None:
         updates['estimated_equity'] = estimated_equity
     if mortgage_balance is not None:
