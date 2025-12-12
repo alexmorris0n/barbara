@@ -353,8 +353,9 @@ Rules:
         if direction == "outbound":
             outbound_voice = models.get("tts_voice_string", "elevenlabs.rachel")
             self.add_post_answer_verb("play", {
-                "url": "say:Hi! This is Barbara from Equity Connect. Just so you know, this call may be recorded. How are you today?",
-                "say_voice": outbound_voice
+                # Per SDK manual: play supports "url" with "say:" or a media URL.
+                # Avoid non-standard keys here; incorrect verb schema can produce dead air.
+                "url": "say:Hi! This is Barbara from Equity Connect. Just so you know, this call may be recorded. How are you today?"
             })
             logger.info(f"[BARBARA] Added outbound greeting with voice: {outbound_voice}")
         
@@ -522,13 +523,18 @@ Rules:
             "openai_asr_engine": models.get("stt_model", "deepgram:nova-3"),
             "end_of_speech_timeout": models.get("end_of_speech_timeout", 700),
             "attention_timeout": models.get("attention_timeout", 5000),
+            # Manual default is 120000ms; setting explicitly helps avoid "no response" timeouts on outbound.
+            "outbound_attention_timeout": models.get("outbound_attention_timeout", 120000),
             "temperature": models.get("temperature", 0.3),  # Low for reliable routing
             "top_p": models.get("top_p", 1.0),  # Nucleus sampling diversity
             "frequency_penalty": models.get("frequency_penalty", 0.4),  # Reduces repetitive phrasing
             "presence_penalty": models.get("presence_penalty", 0.2),   # Encourages slight variety
             "enable_barge": "complete,partial",
             "transparent_barge": models.get("transparent_barge", True),
-            "wait_for_user": direction == "outbound",  # Wait for senior to answer on outbound calls
+            # NOTE: In this SDK, wait_for_user controls whether the AI waits for *speech* after the call is answered
+            # (it does NOT control ringing/answer). For outbound, default to waiting for the callee to respond.
+            # The post-answer "play" greeting above provides immediate audio so the line isn't silent.
+            "wait_for_user": models.get("wait_for_user", direction == "outbound"),
             "save_conversation": True,
             "conversation_id": phone,
             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
