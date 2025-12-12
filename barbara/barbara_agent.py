@@ -322,6 +322,10 @@ Rules:
         phone = normalize_phone(caller_num) if caller_num else "unknown"
         
         logger.info(f"[BARBARA] Call direction: {direction}, phone: {caller_num} (normalized: {phone})")
+
+        # Load models once per request (used for params + TTS voice)
+        # NOTE: This is an external DB call; keep it single-shot to reduce time-to-SWML.
+        models = get_active_signalwire_models()
         
         # CRITICAL: Store call_direction in conversation_state so it persists to on_summary
         # This fixes the bug where outbound calls were being logged as "inbound"
@@ -347,8 +351,7 @@ Rules:
         # This plays BEFORE the AI loads, filling the silence gap
         # Prevents leads from saying "Hello?" multiple times and hanging up
         if direction == "outbound":
-            models_for_voice = get_active_signalwire_models()
-            outbound_voice = models_for_voice.get("tts_voice_string", "elevenlabs.rachel")
+            outbound_voice = models.get("tts_voice_string", "elevenlabs.rachel")
             self.add_post_answer_verb("play", {
                 "url": "say:Hi! This is Barbara from Equity Connect. Just so you know, this call may be recorded. How are you today?",
                 "say_voice": outbound_voice
@@ -371,7 +374,6 @@ Rules:
         
         state = get_conversation_state(phone)
         theme_prompt = get_theme_prompt("reverse_mortgage")
-        models = get_active_signalwire_models()
         
         # Sync lead status to conversation_state on call start
         if lead:
@@ -410,15 +412,20 @@ Rules:
         broker_phone = broker.get('primary_phone_e164', '') if broker else ''  # E.164 for transfers
         
         # Fetch broker availability (sync call to Nylas or generate from business hours)
-        # This pre-loads slots so LLM can offer them immediately in BOOK node
+        # This pre-loads slots so LLM can offer them immediately in BOOK node.
+        #
+        # IMPORTANT: For OUTBOUND calls, do NOT block initial SWML on Nylas (dead-air risk).
+        # The BOOK context already has the check_broker_availability() tool for real-time lookup.
         available_slots = []
         available_slots_display = "No slots available"
-        if broker:
+        if broker and direction != "outbound":
             available_slots = fetch_broker_availability(broker, days_ahead=5, max_slots=10)
             available_slots_display = format_slots_for_llm(available_slots, max_display=5)
             logger.info(f"[BARBARA] Fetched {len(available_slots)} available slots for broker {broker_name}")
         
-        self.set_global_data({
+        # Build global_data once and set it once.
+        # NOTE: AgentBase.set_global_data() overwrites, so multiple calls here can drop fields.
+        global_data: Dict[str, Any] = {
             # Caller identity
             "caller_phone": phone,
             "caller_name": lead.get('first_name', 'there') if lead else 'there',
@@ -481,7 +488,7 @@ Rules:
             
             # Theme (loaded from DB, can vary per vertical)
             "theme": theme_prompt or '',
-        })
+        }
 
         # ---------------------------------------------------------------------
         # Dynamic node prompts (Vue live-edit support)
@@ -499,10 +506,13 @@ Rules:
                     "instructions",
                     f"Continue the conversation in the {node_name} stage."
                 )
-            self.set_global_data(node_prompt_data)
+            global_data.update(node_prompt_data)
             logger.info("[BARBARA] Loaded %d node instruction prompts into global_data", len(node_prompt_data))
         except Exception as e:
             logger.error("[BARBARA] Failed to load node instruction prompts into global_data: %s", e)
+
+        # Apply global_data (single call to avoid overwriting)
+        self.set_global_data(global_data)
         
         # Configure AI models from database
         # Per Section 3.21 (AI Parameters)
