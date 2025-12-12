@@ -209,6 +209,11 @@ Rules:
         self.clear_pre_answer_verbs()
         self.clear_post_answer_verbs()
         
+        # CRITICAL: Clear prompt sections from previous requests
+        # Per SDK docs: "Clear prompts between calls - Use self.pom.clear() if reusing sections"
+        # Without this, Theme and Caller Context accumulate on each call until SWML is too large
+        self.pom.clear()
+        
         # Extract call data from SignalWire request
         call_data = request_data.get("call", {})
         direction = call_data.get("direction") or request_data.get("direction", "inbound")
