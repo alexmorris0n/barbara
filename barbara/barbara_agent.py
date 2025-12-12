@@ -322,10 +322,6 @@ Rules:
         phone = normalize_phone(caller_num) if caller_num else "unknown"
         
         logger.info(f"[BARBARA] Call direction: {direction}, phone: {caller_num} (normalized: {phone})")
-
-        # Load models once per request (used for params + TTS voice)
-        # NOTE: This is an external DB call; keep it single-shot to reduce time-to-SWML.
-        models = get_active_signalwire_models()
         
         # CRITICAL: Store call_direction in conversation_state so it persists to on_summary
         # This fixes the bug where outbound calls were being logged as "inbound"
@@ -351,14 +347,9 @@ Rules:
         # This plays BEFORE the AI loads, filling the silence gap
         # Prevents leads from saying "Hello?" multiple times and hanging up
         if direction == "outbound":
-            # Re-fetch models specifically for the outbound greeting so the greeting voice
-            # tracks the latest DB config even if other parts of request handling reuse a
-            # previously loaded snapshot.
             models_for_voice = get_active_signalwire_models()
             outbound_voice = models_for_voice.get("tts_voice_string", "elevenlabs.rachel")
             self.add_post_answer_verb("play", {
-                # Per SDK manual: play supports "url" with "say:" or a media URL.
-                # Avoid non-standard keys here; incorrect verb schema can produce dead air.
                 "url": "say:Hi! This is Barbara from Equity Connect. Just so you know, this call may be recorded. How are you today?",
                 "say_voice": outbound_voice
             })
@@ -380,6 +371,7 @@ Rules:
         
         state = get_conversation_state(phone)
         theme_prompt = get_theme_prompt("reverse_mortgage")
+        models = get_active_signalwire_models()
         
         # Sync lead status to conversation_state on call start
         if lead:
@@ -418,20 +410,15 @@ Rules:
         broker_phone = broker.get('primary_phone_e164', '') if broker else ''  # E.164 for transfers
         
         # Fetch broker availability (sync call to Nylas or generate from business hours)
-        # This pre-loads slots so LLM can offer them immediately in BOOK node.
-        #
-        # IMPORTANT: For OUTBOUND calls, do NOT block initial SWML on Nylas (dead-air risk).
-        # The BOOK context already has the check_broker_availability() tool for real-time lookup.
+        # This pre-loads slots so LLM can offer them immediately in BOOK node
         available_slots = []
         available_slots_display = "No slots available"
-        if broker and direction != "outbound":
+        if broker:
             available_slots = fetch_broker_availability(broker, days_ahead=5, max_slots=10)
             available_slots_display = format_slots_for_llm(available_slots, max_display=5)
             logger.info(f"[BARBARA] Fetched {len(available_slots)} available slots for broker {broker_name}")
         
-        # Build global_data once and set it once.
-        # NOTE: AgentBase.set_global_data() overwrites, so multiple calls here can drop fields.
-        global_data: Dict[str, Any] = {
+        self.set_global_data({
             # Caller identity
             "caller_phone": phone,
             "caller_name": lead.get('first_name', 'there') if lead else 'there',
@@ -494,7 +481,7 @@ Rules:
             
             # Theme (loaded from DB, can vary per vertical)
             "theme": theme_prompt or '',
-        }
+        })
 
         # ---------------------------------------------------------------------
         # Dynamic node prompts (Vue live-edit support)
@@ -512,13 +499,10 @@ Rules:
                     "instructions",
                     f"Continue the conversation in the {node_name} stage."
                 )
-            global_data.update(node_prompt_data)
+            self.set_global_data(node_prompt_data)
             logger.info("[BARBARA] Loaded %d node instruction prompts into global_data", len(node_prompt_data))
         except Exception as e:
             logger.error("[BARBARA] Failed to load node instruction prompts into global_data: %s", e)
-
-        # Apply global_data (single call to avoid overwriting)
-        self.set_global_data(global_data)
         
         # Configure AI models from database
         # Per Section 3.21 (AI Parameters)
@@ -528,18 +512,13 @@ Rules:
             "openai_asr_engine": models.get("stt_model", "deepgram:nova-3"),
             "end_of_speech_timeout": models.get("end_of_speech_timeout", 700),
             "attention_timeout": models.get("attention_timeout", 5000),
-            # Manual default is 120000ms; setting explicitly helps avoid "no response" timeouts on outbound.
-            "outbound_attention_timeout": models.get("outbound_attention_timeout", 120000),
             "temperature": models.get("temperature", 0.3),  # Low for reliable routing
             "top_p": models.get("top_p", 1.0),  # Nucleus sampling diversity
             "frequency_penalty": models.get("frequency_penalty", 0.4),  # Reduces repetitive phrasing
             "presence_penalty": models.get("presence_penalty", 0.2),   # Encourages slight variety
             "enable_barge": "complete,partial",
             "transparent_barge": models.get("transparent_barge", True),
-            # NOTE: In this SDK, wait_for_user controls whether the AI waits for *speech* after the call is answered
-            # (it does NOT control ringing/answer). For outbound, default to waiting for the callee to respond.
-            # The post-answer "play" greeting above provides immediate audio so the line isn't silent.
-            "wait_for_user": models.get("wait_for_user", direction == "outbound"),
+            "wait_for_user": direction == "outbound",  # Wait for senior to answer on outbound calls
             "save_conversation": True,
             "conversation_id": phone,
             "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
