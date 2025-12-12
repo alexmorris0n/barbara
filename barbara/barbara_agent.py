@@ -473,6 +473,27 @@ Rules:
             # Theme (loaded from DB, can vary per vertical)
             "theme": theme_prompt or '',
         })
+
+        # ---------------------------------------------------------------------
+        # Dynamic node prompts (Vue live-edit support)
+        #
+        # Contexts/steps are defined once in __init__ (per SDK guidance), but the
+        # step text itself is a prompt string. We set each step's text to a
+        # ${global_data.*} placeholder in _build_contexts(), and refresh these
+        # per-call from the DB here so Vue edits take effect on the next call.
+        # ---------------------------------------------------------------------
+        try:
+            node_prompt_data: Dict[str, str] = {}
+            for node_name in ALL_NODES:
+                cfg = get_node_config(node_name, "reverse_mortgage") or get_fallback_node_config(node_name)
+                node_prompt_data[f"node_instructions_{node_name}"] = cfg.get(
+                    "instructions",
+                    f"Continue the conversation in the {node_name} stage."
+                )
+            self.set_global_data(node_prompt_data)
+            logger.info("[BARBARA] Loaded %d node instruction prompts into global_data", len(node_prompt_data))
+        except Exception as e:
+            logger.error("[BARBARA] Failed to load node instruction prompts into global_data: %s", e)
         
         # Configure AI models from database
         # Per Section 3.21 (AI Parameters)
@@ -661,7 +682,9 @@ Rules:
             if not config:
                 config = get_fallback_node_config(node_name)
             
-            instructions = config.get('instructions', f'Continue the conversation in the {node_name} stage.')
+            # IMPORTANT: Do not bake DB prompt text into the context at startup.
+            # We want Vue edits to be picked up per-call without restarting.
+            # The real text is injected via ${global_data.node_instructions_<node>} in on_swml_request().
             valid_contexts = config.get('valid_contexts', [])
             functions = config.get('functions', [])
             step_criteria = config.get('step_criteria', '')
@@ -693,7 +716,7 @@ Rules:
             # Add single step per context (Barbara's nodes are single-step)
             # Per Section 6.9 (Step Configuration)
             step = context.add_step("main")
-            step.set_text(instructions)
+            step.set_text(f"${{global_data.node_instructions_{node_name}}}")
             
             if step_criteria:
                 step.set_step_criteria(step_criteria)
