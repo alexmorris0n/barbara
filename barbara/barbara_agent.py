@@ -264,8 +264,11 @@ Rules:
         logger.info(f"[BARBARA] URL params: lead_id={lead_id_from_url}, direction={direction_from_url}")
         
         # Use direction from URL if provided (more reliable for outbound)
-        if direction_from_url:
-            direction = direction_from_url
+        # SECURITY: Validate direction is a known value to prevent injection
+        if direction_from_url and direction_from_url.lower() in ("inbound", "outbound"):
+            direction = direction_from_url.lower()
+        elif direction_from_url:
+            logger.warning(f"[BARBARA] Invalid direction from URL: '{direction_from_url}' - ignoring")
         
         # For OUTBOUND calls: use the TO number (lead's phone) and lead_id from URL
         # For INBOUND calls: use the FROM number (caller's phone)
@@ -382,6 +385,49 @@ Rules:
         # REMOVED: Broker availability fetch was causing slow SWML response (~1-2s)
         # The BOOK node now calls check_broker_availability() for real-time lookup
         
+        # ---------------------------------------------------------------------
+        # CONTEXT ISOLATION: Load ONLY greet instructions at call start
+        # We need to replace placeholders BEFORE set_global_data, so extract
+        # all values first, build placeholder map, then replace in instructions
+        # ---------------------------------------------------------------------
+        starting_context = "greet"
+        
+        # Extract values needed for placeholder replacement (same as will be in set_global_data)
+        caller_name = lead.get('first_name', 'there') if lead else 'there'
+        persona_name = ((lead.get('persona_sender_name') or '').split()[0] 
+                       if lead and (lead.get('persona_sender_name') or '').strip() 
+                       else '')
+        caller_goal = conversation_data.get('caller_goal', '')
+        property_address = lead.get('property_address', '') if lead else ''
+        property_city = lead.get('property_city', '') if lead else ''
+        property_state = lead.get('property_state', '') if lead else ''
+        property_zip = lead.get('property_zip', '') if lead else ''
+        
+        # Build placeholder map and store for change_context() to reuse
+        self._placeholder_values = {
+            "${global_data.call_direction}": direction,
+            "${global_data.caller_name}": caller_name,
+            "${global_data.caller_phone}": phone,
+            "${global_data.persona_name}": persona_name,
+            "${global_data.caller_goal}": caller_goal,
+            "${global_data.property_address}": property_address,
+            "${global_data.property_city}": property_city,
+            "${global_data.property_state}": property_state,
+            "${global_data.property_zip}": property_zip,
+            "${global_data.broker_name}": broker_name,
+            "${global_data.broker_company}": broker_company,
+        }
+        
+        # Load greet instructions and replace placeholders
+        try:
+            cfg = get_node_config(starting_context, "reverse_mortgage") or get_fallback_node_config(starting_context)
+            starting_instructions = cfg.get("instructions", "Greet the caller warmly.")
+            for placeholder, value in self._placeholder_values.items():
+                starting_instructions = starting_instructions.replace(placeholder, str(value))
+        except Exception as e:
+            logger.error(f"[BARBARA] Failed to load greet instructions: {e}")
+            starting_instructions = "Greet the caller warmly and ask how you can help."
+        
         self.set_global_data({
             # Caller identity
             "caller_phone": phone,
@@ -441,6 +487,10 @@ Rules:
             
             # Theme (loaded from DB, can vary per vertical)
             "theme": theme_prompt or '',
+            
+            # CONTEXT ISOLATION: Only greet instructions at start (others lazy-loaded)
+            f"node_instructions_{starting_context}": starting_instructions,
+            "current_context": starting_context,
         })
 
         # ---------------------------------------------------------------------
@@ -518,53 +568,7 @@ When ready to book, call check_broker_availability() to get real-time available 
         )
         
         logger.info(f"[BARBARA] Added Theme and Caller Context with inline values for {caller_name}")
-
-        # ---------------------------------------------------------------------
-        # CONTEXT ISOLATION FIX: Load ONLY starting context instructions
-        #
-        # Previously loaded ALL 8 node instructions into global_data, causing
-        # the AI to see everything at once and hallucinate actions from other nodes.
-        #
-        # Now: Load ONLY "greet" at call start. change_context() will lazy-load
-        # each node's instructions when switching, using .remove_global_data()
-        # to clear stale instructions and .update_global_data() to set new ones.
-        #
-        # This enforces: "global_data may contain node instructions, but ONLY
-        # for ONE node at a time"
-        # ---------------------------------------------------------------------
-        try:
-            # Build replacement map for all global_data placeholders
-            # Store this on the instance so change_context() can reuse it
-            self._placeholder_values = {
-                "${global_data.call_direction}": direction,
-                "${global_data.caller_name}": caller_name,
-                "${global_data.caller_phone}": phone,
-                "${global_data.persona_name}": persona_name,
-                "${global_data.caller_goal}": caller_goal,
-                "${global_data.property_address}": property_address,
-                "${global_data.property_city}": property_city,
-                "${global_data.property_state}": property_state,
-                "${global_data.property_zip}": property_zip,
-                "${global_data.broker_name}": broker_name,
-                "${global_data.broker_company}": broker_company,
-            }
-            
-            # Load ONLY starting context instructions (not all 8)
-            starting_context = "greet"
-            cfg = get_node_config(starting_context, "reverse_mortgage") or get_fallback_node_config(starting_context)
-            starting_instructions = cfg.get("instructions", "Greet the caller warmly.")
-            
-            # Replace placeholders with actual values
-            for placeholder, value in self._placeholder_values.items():
-                starting_instructions = starting_instructions.replace(placeholder, str(value))
-            
-            self.set_global_data({
-                f"node_instructions_{starting_context}": starting_instructions,
-                "current_context": starting_context
-            })
-            logger.info(f"[BARBARA] Loaded ONLY '{starting_context}' instructions (isolated)")
-        except Exception as e:
-            logger.error("[BARBARA] Failed to load starting context instructions: %s", e)
+        logger.info(f"[BARBARA] Context isolation: loaded ONLY 'greet' instructions (others lazy-loaded on switch)")
         
         # Configure AI models from database
         # Per Section 3.21 (AI Parameters)
@@ -841,7 +845,7 @@ When ready to book, call check_broker_availability() to get real-time available 
 
         return call.get("from") or call.get("from_number") or ""
     
-    def _build_placeholder_values(self, lead: Optional[Dict[str, Any]], conv_state: Optional[Dict[str, Any]], phone: str) -> Dict[str, str]:
+    def _build_placeholder_values(self, lead: Optional[Dict[str, Any]], conv_state: Optional[Dict[str, Any]], phone: str, direction: Optional[str] = None) -> Dict[str, str]:
         """
         Build placeholder replacement map for prompt injection.
         
@@ -850,6 +854,14 @@ When ready to book, call check_broker_availability() to get real-time available 
         
         IMPORTANT: These defaults MUST match on_swml_request exactly to prevent
         inconsistencies between initial call setup and context switches.
+        
+        Args:
+            lead: Lead data dict (can be None)
+            conv_state: Conversation state dict (can be None)
+            phone: Phone number for the call
+            direction: Call direction override. If provided, uses this instead of
+                       conv_state lookup. This prevents stale/missing conv_state
+                       from defaulting outbound calls to "inbound".
         """
         if lead is None:
             lead = {}
@@ -867,8 +879,12 @@ When ready to book, call check_broker_availability() to get real-time available 
                        if lead and (lead.get('persona_sender_name') or '').strip() 
                        else '')
         
+        # Use explicit direction if provided, otherwise fall back to conv_state
+        # This prevents stale conv_state from incorrectly defaulting to "inbound"
+        call_direction = direction if direction else conv_state.get("call_direction", "inbound")
+        
         return {
-            "${global_data.call_direction}": conv_state.get("call_direction", "inbound"),
+            "${global_data.call_direction}": call_direction,
             "${global_data.caller_name}": lead.get("first_name", "there"),
             "${global_data.caller_phone}": phone,
             "${global_data.persona_name}": persona_name,
@@ -1398,9 +1414,18 @@ When ready to book, call check_broker_availability() to get real-time available 
         placeholder_values = getattr(self, '_placeholder_values', None)
         if not placeholder_values:
             # Fallback: rebuild placeholder values if not cached
+            # This can happen if agent instance was recycled between calls
+            logger.warning(f"[BARBARA] _placeholder_values cache miss - rebuilding from DB")
             lead = get_lead_by_phone(phone)
             conv_state = get_conversation_state(phone)
-            placeholder_values = self._build_placeholder_values(lead, conv_state, phone)
+            
+            # Get direction from conv_state (stored during on_swml_request)
+            # If missing, we can't reliably determine direction - log warning
+            direction = conv_state.get("call_direction") if conv_state else None
+            if not direction:
+                logger.warning(f"[BARBARA] call_direction not in conv_state - defaulting to 'inbound'")
+            
+            placeholder_values = self._build_placeholder_values(lead, conv_state, phone, direction)
         
         # Replace all placeholders with actual values
         for placeholder, value in placeholder_values.items():
