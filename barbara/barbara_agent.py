@@ -313,7 +313,10 @@ Rules:
                 "url": "say:Hi! This is Barbara from Equity Connect. Just so you know, this call may be recorded. How are you today?",
                 "say_voice": outbound_voice
             })
-            logger.info(f"[BARBARA] Added outbound greeting with voice: {outbound_voice}")
+            # Add pause after greeting to allow global_data placeholders to resolve
+            # SignalWire resolves ${global_data.X} lazily - this gives it time before AI speaks
+            self.add_post_answer_verb("sleep", {"time": 2000})  # 2 second pause
+            logger.info(f"[BARBARA] Added outbound greeting with voice: {outbound_voice} + 2s pause for lazy load")
         
         # Load lead data from database
         # For OUTBOUND: try lead_id from URL first, then fall back to phone lookup
@@ -438,76 +441,59 @@ Rules:
         # This ensures ${global_data.X} placeholders resolve correctly on first AI turn
         # Per research: "set_global_data" must happen BEFORE prompt sections are added
         # ---------------------------------------------------------------------
-        # Add Theme and Caller Context with INLINE VALUES (Option A)
-        # This ensures AI has correct data on first turn - no placeholder resolution needed
+        # TEST: Using placeholders + 2s sleep to see if lazy load resolves in time
+        # If this works, we avoid prompt accumulation issues in production
         # ---------------------------------------------------------------------
-        if theme_prompt:
-            self.prompt_add_section("Theme", theme_prompt)
-        
-        # Extract values for inline prompt (already loaded above)
-        caller_name = lead.get('first_name', 'there') if lead else 'there'
-        caller_phone = phone
-        persona_name = ((lead.get('persona_sender_name') or '').split()[0] 
-                       if lead and (lead.get('persona_sender_name') or '').strip() 
-                       else '')
-        caller_goal = conversation_data.get('caller_goal', '')
-        property_address = lead.get('property_address', '') if lead else ''
-        property_city = lead.get('property_city', '') if lead else ''
-        property_state = lead.get('property_state', '') if lead else ''
-        property_zip = lead.get('property_zip', '') if lead else ''
-        property_value = lead.get('property_value', 0) if lead else 0
-        mortgage_balance = lead.get('current_balance', 0) if lead else 0
-        estimated_equity = lead.get('estimated_equity', 0) if lead else 0
-        caller_age = lead.get('age', 0) if lead else 0
+        self.prompt_add_section("Theme", "${global_data.theme}")
         
         self.prompt_add_section(
             "Caller Context",
-            f"""You are speaking with {caller_name} (phone: {caller_phone}).
+            """You are speaking with ${global_data.caller_name} (phone: ${global_data.caller_phone}).
 
 === CAMPAIGN INFO ===
-Persona (who sent email): {persona_name}
-Caller's Goal: {caller_goal}
+Persona (who sent email): ${global_data.persona_name}
+Caller's Goal: ${global_data.caller_goal}
 
 === PROPERTY INFO ===
-Address: {property_address}
-City: {property_city}, {property_state} {property_zip}
-Estimated Value: {property_value}
-Mortgage Balance: {mortgage_balance}
-Estimated Equity: {estimated_equity}
-Age: {caller_age}
+Address: ${global_data.property_address}
+City: ${global_data.property_city}, ${global_data.property_state} ${global_data.property_zip}
+Estimated Value: ${global_data.property_value}
+Mortgage Balance: ${global_data.mortgage_balance}
+Estimated Equity: ${global_data.estimated_equity}
+Age: ${global_data.caller_age}
 
 === VERIFICATION STATUS ===
-Phone Verified: {lead.get('phone_verified', False) if lead else False}
-Email Verified: {lead.get('email_verified', False) if lead else False}
-Address Verified: {lead.get('address_verified', False) if lead else False}
-Fully Verified: {lead.get('verified', False) if lead else False}
+Phone Verified: ${global_data.phone_verified}
+Email Verified: ${global_data.email_verified}
+Address Verified: ${global_data.address_verified}
+Fully Verified: ${global_data.verified}
 
 === QUALIFICATION STATUS ===
-Age 62+ Qualified: {lead.get('age_qualified', False) if lead else False}
-Homeowner Qualified: {lead.get('homeowner_qualified', False) if lead else False}
-Primary Residence Qualified: {lead.get('primary_residence_qualified', False) if lead else False}
-Equity Qualified: {lead.get('equity_qualified', False) if lead else False}
-Fully Qualified: {lead.get('qualified', False) if lead else False}
+Age 62+ Qualified: ${global_data.age_qualified}
+Homeowner Qualified: ${global_data.homeowner_qualified}
+Primary Residence Qualified: ${global_data.primary_residence_qualified}
+Equity Qualified: ${global_data.equity_qualified}
+Fully Qualified: ${global_data.qualified}
 
 === CONVERSATION STATUS ===
-Greeted: {conversation_data.get('greeted', False)}
-Quote Presented: {conversation_data.get('quote_presented', False)}
-Ready to Book: {conversation_data.get('ready_to_book', False)}
-Appointment Booked: {conversation_data.get('appointment_booked', False)}
-Wrong Person: {conversation_data.get('wrong_person', False)}
-Has Objection: {conversation_data.get('has_objection', False)}
+Greeted: ${global_data.greeted}
+Quote Presented: ${global_data.quote_presented}
+Ready to Book: ${global_data.ready_to_book}
+Appointment Booked: ${global_data.appointment_booked}
+Wrong Person: ${global_data.wrong_person}
+Has Objection: ${global_data.has_objection}
 
 === ASSIGNED BROKER ===
-Name: {broker_name}
-Company: {broker_company}
+Name: ${global_data.broker_name}
+Company: ${global_data.broker_company}
 
 === BOOKING ===
-Broker: {broker_name}
+Broker: ${global_data.broker_name}
 When ready to book, call check_broker_availability() to get real-time available slots.
 """
         )
         
-        logger.info(f"[BARBARA] Added Theme and Caller Context with inline values for {caller_name}")
+        logger.info(f"[BARBARA] Added Theme and Caller Context with placeholders (testing lazy load + 2s sleep)")
 
         # ---------------------------------------------------------------------
         # Dynamic node prompts (Vue live-edit support)
