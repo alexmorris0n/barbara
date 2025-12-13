@@ -281,17 +281,29 @@ def get_node_config(node_name: str, vertical: str = "reverse_mortgage") -> Optio
             # Support both for backward compatibility
             functions = content.get('functions', []) or content.get('tools', [])
             
-            # Assemble instructions with routing (if present)
+            # Assemble instructions: role + instructions + routing
             # Vue edits them separately, but we combine for the agent
+            role = content.get('role', '')
             instructions = content.get('instructions', '')
             routing = content.get('routing', '')
-            logger.info(f"[DB] Node {node_name}: routing field = '{routing[:50]}...' (len={len(routing)})" if routing else f"[DB] Node {node_name}: routing field is EMPTY")
+            
+            # Build final instructions with 4o-mini optimized format
+            # Scope declaration + PURPOSE (from role) + ACTIONS (from instructions) + ROUTING
+            final_instructions = "You are only responsible for actions explicitly listed in this stage."
+            
+            if role:
+                final_instructions += f"\n\n=== PURPOSE ===\n{role}"
+            
+            if instructions:
+                final_instructions += f"\n\n{instructions}"
+            
             if routing:
-                instructions = f"{instructions}\n\n=== ROUTING ===\n{routing}"
-                logger.info(f"[DB] Node {node_name}: Appended routing section")
+                final_instructions += f"\n\n{routing}"
+            
+            logger.info(f"[DB] Node {node_name}: Built instructions with role={bool(role)}, routing={bool(routing)}")
             
             config = {
-                'instructions': instructions,
+                'instructions': final_instructions,
                 'valid_contexts': content.get('valid_contexts', []),
                 'functions': functions,
                 'step_criteria': content.get('step_criteria', '')
