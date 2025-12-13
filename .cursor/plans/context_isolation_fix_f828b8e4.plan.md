@@ -22,7 +22,7 @@ todos:
     status: completed
   - id: test-isolation
     content: Test single outbound call for isolation
-    status: in_progress
+    status: completed
 ---
 
 # Context Isolation and Token Fix Plan
