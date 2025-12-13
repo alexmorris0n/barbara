@@ -104,10 +104,21 @@ class BarbaraAgent(AgentBase):
             record_format="wav"
         )
         
-        # NOTE: ALL prompt sections (Role, Quote Tool Rule, Theme, Caller Context) are added
-        # in on_swml_request AFTER pom.clear() and set_global_data()
-        # This ensures ${global_data.X} placeholders resolve correctly on first AI turn
-        # Per SDK docs: "Clear prompts between calls - Use self.pom.clear() if reusing sections"
+        # Static prompt sections (don't change per-call)
+        self.prompt_add_section(
+            "Role",
+            "You are Barbara, a warm and professional voice assistant helping homeowners explore reverse mortgage options."
+        )
+        self.prompt_add_section(
+            "Quote Tool Rule",
+            """CRITICAL:
+- If you present any dollar-amount estimate (lump sum, monthly amount, available funds), you MUST call calculate_reverse_mortgage() first.
+- If you are missing inputs, ask for them (especially exact age and home value) and update the lead via update_lead_info(), then call calculate_reverse_mortgage().
+- After you present the quote to the caller, call mark_quote_presented()."""
+        )
+        
+        # NOTE: Dynamic sections (Theme, Caller Context) are added in on_swml_request
+        # with INLINE VALUES (not placeholders) after lead data is loaded
         
         # Add math skill per Section 5.18.3
         # Provides: calculate - Evaluate mathematical expressions
@@ -208,23 +219,10 @@ Rules:
         self.clear_pre_answer_verbs()
         self.clear_post_answer_verbs()
         
-        # CRITICAL: Clear prompt sections from previous requests
-        # Per SDK docs: "Clear prompts between calls - Use self.pom.clear() if reusing sections"
-        # This ensures ${global_data.X} placeholders are bound to THIS call's data
-        self.pom.clear()
-        
-        # Re-add static sections (cleared by pom.clear)
-        self.prompt_add_section(
-            "Role",
-            "You are Barbara, a warm and professional voice assistant helping homeowners explore reverse mortgage options."
-        )
-        self.prompt_add_section(
-            "Quote Tool Rule",
-            """CRITICAL:
-- If you present any dollar-amount estimate (lump sum, monthly amount, available funds), you MUST call calculate_reverse_mortgage() first.
-- If you are missing inputs, ask for them (especially exact age and home value) and update the lead via update_lead_info(), then call calculate_reverse_mortgage().
-- After you present the quote to the caller, call mark_quote_presented()."""
-        )
+        # NOTE: Prompt sections are added per-call with INLINE VALUES (not placeholders)
+        # This ensures the AI has the correct data on the first turn
+        # Static sections (Role, Quote Tool Rule) are in __init__
+        # Dynamic sections (Theme, Caller Context) are added later in this method after lead loads
         
         # Extract call data from SignalWire request
         call_data = request_data.get("call", {})
@@ -440,56 +438,76 @@ Rules:
         # This ensures ${global_data.X} placeholders resolve correctly on first AI turn
         # Per research: "set_global_data" must happen BEFORE prompt sections are added
         # ---------------------------------------------------------------------
-        self.prompt_add_section("Theme", "${global_data.theme}")
+        # Add Theme and Caller Context with INLINE VALUES (Option A)
+        # This ensures AI has correct data on first turn - no placeholder resolution needed
+        # ---------------------------------------------------------------------
+        if theme_prompt:
+            self.prompt_add_section("Theme", theme_prompt)
+        
+        # Extract values for inline prompt (already loaded above)
+        caller_name = lead.get('first_name', 'there') if lead else 'there'
+        caller_phone = phone
+        persona_name = ((lead.get('persona_sender_name') or '').split()[0] 
+                       if lead and (lead.get('persona_sender_name') or '').strip() 
+                       else '')
+        caller_goal = conversation_data.get('caller_goal', '')
+        property_address = lead.get('property_address', '') if lead else ''
+        property_city = lead.get('property_city', '') if lead else ''
+        property_state = lead.get('property_state', '') if lead else ''
+        property_zip = lead.get('property_zip', '') if lead else ''
+        property_value = lead.get('property_value', 0) if lead else 0
+        mortgage_balance = lead.get('current_balance', 0) if lead else 0
+        estimated_equity = lead.get('estimated_equity', 0) if lead else 0
+        caller_age = lead.get('age', 0) if lead else 0
         
         self.prompt_add_section(
             "Caller Context",
-            """You are speaking with ${global_data.caller_name} (phone: ${global_data.caller_phone}).
+            f"""You are speaking with {caller_name} (phone: {caller_phone}).
 
 === CAMPAIGN INFO ===
-Persona (who sent email): ${global_data.persona_name}
-Caller's Goal: ${global_data.caller_goal}
+Persona (who sent email): {persona_name}
+Caller's Goal: {caller_goal}
 
 === PROPERTY INFO ===
-Address: ${global_data.property_address}
-City: ${global_data.property_city}, ${global_data.property_state} ${global_data.property_zip}
-Estimated Value: ${global_data.property_value}
-Mortgage Balance: ${global_data.mortgage_balance}
-Estimated Equity: ${global_data.estimated_equity}
-Age: ${global_data.caller_age}
+Address: {property_address}
+City: {property_city}, {property_state} {property_zip}
+Estimated Value: {property_value}
+Mortgage Balance: {mortgage_balance}
+Estimated Equity: {estimated_equity}
+Age: {caller_age}
 
 === VERIFICATION STATUS ===
-Phone Verified: ${global_data.phone_verified}
-Email Verified: ${global_data.email_verified}
-Address Verified: ${global_data.address_verified}
-Fully Verified: ${global_data.verified}
+Phone Verified: {lead.get('phone_verified', False) if lead else False}
+Email Verified: {lead.get('email_verified', False) if lead else False}
+Address Verified: {lead.get('address_verified', False) if lead else False}
+Fully Verified: {lead.get('verified', False) if lead else False}
 
 === QUALIFICATION STATUS ===
-Age 62+ Qualified: ${global_data.age_qualified}
-Homeowner Qualified: ${global_data.homeowner_qualified}
-Primary Residence Qualified: ${global_data.primary_residence_qualified}
-Equity Qualified: ${global_data.equity_qualified}
-Fully Qualified: ${global_data.qualified}
+Age 62+ Qualified: {lead.get('age_qualified', False) if lead else False}
+Homeowner Qualified: {lead.get('homeowner_qualified', False) if lead else False}
+Primary Residence Qualified: {lead.get('primary_residence_qualified', False) if lead else False}
+Equity Qualified: {lead.get('equity_qualified', False) if lead else False}
+Fully Qualified: {lead.get('qualified', False) if lead else False}
 
 === CONVERSATION STATUS ===
-Greeted: ${global_data.greeted}
-Quote Presented: ${global_data.quote_presented}
-Ready to Book: ${global_data.ready_to_book}
-Appointment Booked: ${global_data.appointment_booked}
-Wrong Person: ${global_data.wrong_person}
-Has Objection: ${global_data.has_objection}
+Greeted: {conversation_data.get('greeted', False)}
+Quote Presented: {conversation_data.get('quote_presented', False)}
+Ready to Book: {conversation_data.get('ready_to_book', False)}
+Appointment Booked: {conversation_data.get('appointment_booked', False)}
+Wrong Person: {conversation_data.get('wrong_person', False)}
+Has Objection: {conversation_data.get('has_objection', False)}
 
 === ASSIGNED BROKER ===
-Name: ${global_data.broker_name}
-Company: ${global_data.broker_company}
+Name: {broker_name}
+Company: {broker_company}
 
 === BOOKING ===
-Broker: ${global_data.broker_name}
+Broker: {broker_name}
 When ready to book, call check_broker_availability() to get real-time available slots.
 """
         )
         
-        logger.info("[BARBARA] Added Theme and Caller Context sections after set_global_data")
+        logger.info(f"[BARBARA] Added Theme and Caller Context with inline values for {caller_name}")
 
         # ---------------------------------------------------------------------
         # Dynamic node prompts (Vue live-edit support)
