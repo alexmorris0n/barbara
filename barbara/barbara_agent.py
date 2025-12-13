@@ -315,7 +315,7 @@ Rules:
         if direction == "outbound":
             outbound_voice = models.get("tts_voice_string", "elevenlabs.rachel")
             self.add_post_answer_verb("play", {
-                "url": "say:Hi! This is Barbara from Equity Connect. Just so you know, this call may be recorded. How are you today?",
+                "url": "say:Hi! This is Barbara from Equity Connect. How are you today?",
                 "say_voice": outbound_voice
             })
             logger.info(f"[BARBARA] Added outbound greeting with voice: {outbound_voice}")
@@ -521,17 +521,44 @@ When ready to book, call check_broker_availability() to get real-time available 
         # step text itself is a prompt string. We set each step's text to a
         # ${global_data.*} placeholder in _build_contexts(), and refresh these
         # per-call from the DB here so Vue edits take effect on the next call.
+        #
+        # CRITICAL: Replace ${global_data.X} placeholders with actual values
+        # SignalWire doesn't resolve nested placeholders, so we must do it here.
         # ---------------------------------------------------------------------
         try:
             node_prompt_data: Dict[str, str] = {}
+            
+            # Build replacement map for all global_data placeholders
+            # These variables are already set with defaults above
+            placeholder_values = {
+                "${global_data.call_direction}": direction,
+                "${global_data.caller_name}": caller_name,
+                "${global_data.caller_phone}": phone,
+                "${global_data.persona_name}": persona_name,
+                "${global_data.caller_goal}": caller_goal,
+                "${global_data.property_address}": property_address,
+                "${global_data.property_city}": property_city,
+                "${global_data.property_state}": property_state,
+                "${global_data.property_zip}": property_zip,
+                "${global_data.broker_name}": broker_name,
+                "${global_data.broker_company}": broker_company,
+            }
+            
             for node_name in ALL_NODES:
                 cfg = get_node_config(node_name, "reverse_mortgage") or get_fallback_node_config(node_name)
-                node_prompt_data[f"node_instructions_{node_name}"] = cfg.get(
+                instructions = cfg.get(
                     "instructions",
                     f"Continue the conversation in the {node_name} stage."
                 )
+                
+                # Replace all placeholders with actual values
+                for placeholder, value in placeholder_values.items():
+                    instructions = instructions.replace(placeholder, str(value))
+                
+                node_prompt_data[f"node_instructions_{node_name}"] = instructions
+                
             self.set_global_data(node_prompt_data)
-            logger.info("[BARBARA] Loaded %d node instruction prompts into global_data", len(node_prompt_data))
+            logger.info("[BARBARA] Loaded %d node instruction prompts into global_data (placeholders resolved)", len(node_prompt_data))
         except Exception as e:
             logger.error("[BARBARA] Failed to load node instruction prompts into global_data: %s", e)
         
