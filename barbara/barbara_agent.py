@@ -464,7 +464,10 @@ Rules:
         
         self.prompt_add_section(
             "Caller Context",
-            f"""You are speaking with {caller_name} (phone: {caller_phone}).
+            f"""=== CALL TYPE: {direction.upper()} ===
+{"FOR OUTBOUND: The greeting already played. Do NOT re-introduce yourself or ask 'how are you' again." if direction == "outbound" else "FOR INBOUND: Introduce yourself first."}
+
+You are speaking with {caller_name} (phone: {caller_phone}).
 
 === CAMPAIGN INFO ===
 Persona (who sent email): {persona_name}
