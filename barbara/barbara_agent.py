@@ -214,10 +214,10 @@ Rules:
         - called_id_num: Number that was called
         - direction: "inbound" or "outbound"
         """
-        # CRITICAL: Clear any verbs from previous requests
-        # The agent is a singleton, so verbs persist between calls
-        self.clear_pre_answer_verbs()
-        self.clear_post_answer_verbs()
+        # NOTE: Removed clear_pre_answer_verbs() and clear_post_answer_verbs() 
+        # - They were causing the phone-not-ringing bug on outbound calls
+        # - The old working code didn't have these calls
+        # - Verb accumulation may still be an issue, but calls need to work first
         
         # NOTE: Prompt sections are added per-call with INLINE VALUES (not placeholders)
         # This ensures the AI has the correct data on the first turn
