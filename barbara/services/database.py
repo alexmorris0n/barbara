@@ -281,14 +281,12 @@ def get_node_config(node_name: str, vertical: str = "reverse_mortgage") -> Optio
             # Support both for backward compatibility
             functions = content.get('functions', []) or content.get('tools', [])
             
-            # Assemble instructions: role + instructions + routing
-            # Vue edits them separately, but we combine for the agent
+            # Assemble instructions: scope + role (PURPOSE) + instructions
+            # Routing is embedded inline in instructions, NOT as separate section
             role = content.get('role', '')
             instructions = content.get('instructions', '')
-            routing = content.get('routing', '')
             
             # Build final instructions with 4o-mini optimized format
-            # Scope declaration + PURPOSE (from role) + ACTIONS (from instructions) + ROUTING
             final_instructions = "You are only responsible for actions explicitly listed in this stage."
             
             if role:
@@ -297,10 +295,7 @@ def get_node_config(node_name: str, vertical: str = "reverse_mortgage") -> Optio
             if instructions:
                 final_instructions += f"\n\n{instructions}"
             
-            if routing:
-                final_instructions += f"\n\n{routing}"
-            
-            logger.info(f"[DB] Node {node_name}: Built instructions with role={bool(role)}, routing={bool(routing)}")
+            logger.info(f"[DB] Node {node_name}: Built instructions with role={bool(role)}")
             
             config = {
                 'instructions': final_instructions,
