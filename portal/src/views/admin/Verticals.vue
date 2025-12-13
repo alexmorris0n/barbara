@@ -1143,19 +1143,6 @@
                   </div>
                   
                   <div class="editor-field">
-                    <label>Routing</label>
-                    <textarea
-                      :value="nodeContent[node]?.routing || ''"
-                      @input="(e) => { updateNodeRouting(node, e.target.value); autoResizeNodeTextareas(node); }"
-                      placeholder="→ If caller asks question: Route to ANSWER
-→ If ready to book: Route to BOOK
-→ If not interested: Route to GOODBYE"
-                      rows="4"
-                    ></textarea>
-                    <small class="field-hint">When to leave this node and where to go. Agent combines this with Instructions.</small>
-                  </div>
-                  
-                  <div class="editor-field">
                     <label>Step Criteria</label>
                     <textarea
                       :value="nodeContent[node]?.step_criteria || ''"
@@ -2435,7 +2422,6 @@ function initNodeContent() {
       nodeContent.value[node] = {
         role: '',
         instructions: '',
-        routing: '',
         step_criteria: '',
         valid_contexts: [], // Initialize as empty array for multi-select
         tools: [], // Initialize as empty array for multi-select
@@ -2445,10 +2431,6 @@ function initNodeContent() {
     // Ensure role field exists even if it's empty
     if (!('role' in nodeContent.value[node])) {
       nodeContent.value[node].role = ''
-    }
-    // Ensure routing field exists
-    if (!('routing' in nodeContent.value[node])) {
-      nodeContent.value[node].routing = ''
     }
     if (nodeHasChanges.value[node] === undefined) {
       nodeHasChanges.value[node] = false
@@ -4485,7 +4467,6 @@ async function loadNodePrompts() {
             nodeContent.value[p.node_name] = {
               role: '',
               instructions: '',
-              routing: '',
               step_criteria: '',
               valid_contexts: [],
               tools: [],
@@ -4502,19 +4483,12 @@ async function loadNodePrompts() {
           const stepCriteriaValue = typeof matchingVersion.content.step_criteria === 'string'
             ? matchingVersion.content.step_criteria
             : (matchingVersion.content.step_criteria || '')
-          const routingValue = typeof matchingVersion.content.routing === 'string'
-            ? matchingVersion.content.routing
-            : (matchingVersion.content.routing || '')
-          
-          console.log('ROUTING DEBUG for', p.node_name, ':', {
-            rawRouting: matchingVersion.content.routing,
-            routingValue: routingValue,
+          console.log('Node DEBUG for', p.node_name, ':', {
             stepCriteriaValue: stepCriteriaValue
           })
           
           nodeContent.value[p.node_name].role = roleValue
           nodeContent.value[p.node_name].instructions = instructionsValue
-          nodeContent.value[p.node_name].routing = routingValue
           nodeContent.value[p.node_name].step_criteria = stepCriteriaValue
           nodeContent.value[p.node_name].valid_contexts = [...validContextsArray] // Create new array copy for reactivity
           nodeContent.value[p.node_name].tools = [...toolsArray] // Create new array copy for reactivity
@@ -4535,7 +4509,6 @@ async function loadNodePrompts() {
           nodeContent.value[p.node_name] = {
             role: '',
             instructions: '',
-            routing: '',
             step_criteria: '',
             valid_contexts: [], // Initialize as empty array for multi-select
             tools: [], // Initialize as empty array for multi-select
@@ -4827,7 +4800,6 @@ async function saveNode(nodeName) {
     const contentObj = {
       ...existingContent,
       instructions: nodeContent.value[nodeName].instructions || '',
-      routing: nodeContent.value[nodeName].routing || '',
       step_criteria: nodeContent.value[nodeName].step_criteria || '',
       valid_contexts: validContextsArray,
       tools: toolsArray,
@@ -5454,7 +5426,6 @@ async function toggleNode(node) {
         const newNodeContent = {
           role: content.role || '',
           instructions: content.instructions || '',
-          routing: content.routing || '',
           step_criteria: content.step_criteria || '',
           valid_contexts: [...validContextsArray], // Create new array copy for reactivity
           tools: [...toolsArray], // Create new array copy for reactivity
@@ -5468,7 +5439,6 @@ async function toggleNode(node) {
       console.log('No content found, initializing empty for', node)
       nodeContent.value[node] = {
         instructions: '',
-        routing: '',
         step_criteria: '',
         valid_contexts: [], // Initialize as empty array for multi-select
         tools: [], // Initialize as empty array for multi-select
@@ -5514,15 +5484,6 @@ function updateInstructions(node, value) {
     nodeContent.value[node] = { instructions: '', tools: [] }
   }
   nodeContent.value[node].instructions = value
-  markNodeChanged(node)
-}
-
-// Update node routing
-function updateNodeRouting(node, value) {
-  if (!nodeContent.value[node]) {
-    nodeContent.value[node] = { instructions: '', routing: '', tools: [] }
-  }
-  nodeContent.value[node].routing = value
   markNodeChanged(node)
 }
 
