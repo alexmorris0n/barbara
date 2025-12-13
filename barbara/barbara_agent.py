@@ -91,8 +91,13 @@ class BarbaraAgent(AgentBase):
         Initialize with name and route, then configure base settings.
         
         Per Section 6.8: Contexts must be defined in __init__, NOT in on_swml_request.
+        
+        NOTE: Recording settings (record_call, record_stereo, record_format) were removed
+        because they caused the phone-not-ringing bug on outbound calls. SignalWire showed
+        calls as "answered" but the recipient's phone never rang. Removing these settings
+        fixed the issue. Recording should be re-enabled via SignalWire dashboard or
+        investigated further if needed.
         """
-        # Simple constructor - recording removed to test if it was causing phone-not-ringing bug
         super().__init__(
             name="barbara",
             route="/agent/barbara"
@@ -515,22 +520,22 @@ When ready to book, call check_broker_availability() to get real-time available 
         logger.info(f"[BARBARA] Added Theme and Caller Context with inline values for {caller_name}")
 
         # ---------------------------------------------------------------------
-        # Dynamic node prompts (Vue live-edit support)
+        # CONTEXT ISOLATION FIX: Load ONLY starting context instructions
         #
-        # Contexts/steps are defined once in __init__ (per SDK guidance), but the
-        # step text itself is a prompt string. We set each step's text to a
-        # ${global_data.*} placeholder in _build_contexts(), and refresh these
-        # per-call from the DB here so Vue edits take effect on the next call.
+        # Previously loaded ALL 8 node instructions into global_data, causing
+        # the AI to see everything at once and hallucinate actions from other nodes.
         #
-        # CRITICAL: Replace ${global_data.X} placeholders with actual values
-        # SignalWire doesn't resolve nested placeholders, so we must do it here.
+        # Now: Load ONLY "greet" at call start. change_context() will lazy-load
+        # each node's instructions when switching, using .remove_global_data()
+        # to clear stale instructions and .update_global_data() to set new ones.
+        #
+        # This enforces: "global_data may contain node instructions, but ONLY
+        # for ONE node at a time"
         # ---------------------------------------------------------------------
         try:
-            node_prompt_data: Dict[str, str] = {}
-            
             # Build replacement map for all global_data placeholders
-            # These variables are already set with defaults above
-            placeholder_values = {
+            # Store this on the instance so change_context() can reuse it
+            self._placeholder_values = {
                 "${global_data.call_direction}": direction,
                 "${global_data.caller_name}": caller_name,
                 "${global_data.caller_phone}": phone,
@@ -544,23 +549,22 @@ When ready to book, call check_broker_availability() to get real-time available 
                 "${global_data.broker_company}": broker_company,
             }
             
-            for node_name in ALL_NODES:
-                cfg = get_node_config(node_name, "reverse_mortgage") or get_fallback_node_config(node_name)
-                instructions = cfg.get(
-                    "instructions",
-                    f"Continue the conversation in the {node_name} stage."
-                )
-                
-                # Replace all placeholders with actual values
-                for placeholder, value in placeholder_values.items():
-                    instructions = instructions.replace(placeholder, str(value))
-                
-                node_prompt_data[f"node_instructions_{node_name}"] = instructions
-                
-            self.set_global_data(node_prompt_data)
-            logger.info("[BARBARA] Loaded %d node instruction prompts into global_data (placeholders resolved)", len(node_prompt_data))
+            # Load ONLY starting context instructions (not all 8)
+            starting_context = "greet"
+            cfg = get_node_config(starting_context, "reverse_mortgage") or get_fallback_node_config(starting_context)
+            starting_instructions = cfg.get("instructions", "Greet the caller warmly.")
+            
+            # Replace placeholders with actual values
+            for placeholder, value in self._placeholder_values.items():
+                starting_instructions = starting_instructions.replace(placeholder, str(value))
+            
+            self.set_global_data({
+                f"node_instructions_{starting_context}": starting_instructions,
+                "current_context": starting_context
+            })
+            logger.info(f"[BARBARA] Loaded ONLY '{starting_context}' instructions (isolated)")
         except Exception as e:
-            logger.error("[BARBARA] Failed to load node instruction prompts into global_data: %s", e)
+            logger.error("[BARBARA] Failed to load starting context instructions: %s", e)
         
         # Configure AI models from database
         # Per Section 3.21 (AI Parameters)
@@ -836,6 +840,46 @@ When ready to book, call check_broker_availability() to get real-time available 
             return call.get("to") or call.get("to_number") or ""
 
         return call.get("from") or call.get("from_number") or ""
+    
+    def _build_placeholder_values(self, lead: Optional[Dict[str, Any]], conv_state: Optional[Dict[str, Any]], phone: str) -> Dict[str, str]:
+        """
+        Build placeholder replacement map for prompt injection.
+        
+        Used by change_context() to replace ${global_data.X} placeholders
+        when lazy-loading node instructions.
+        
+        IMPORTANT: These defaults MUST match on_swml_request exactly to prevent
+        inconsistencies between initial call setup and context switches.
+        """
+        if lead is None:
+            lead = {}
+        if conv_state is None:
+            conv_state = {}
+        
+        # Extract broker info - MUST match on_swml_request (lines 372-374)
+        broker = lead.get('brokers', {}) if lead else {}
+        broker_name = broker.get('contact_name', 'your broker') if broker else 'your broker'
+        broker_company = broker.get('company_name', '') if broker else ''
+        
+        # Extract persona_name - MUST match on_swml_request (lines 389-391)
+        # Uses persona_sender_name field, extracts first name only
+        persona_name = ((lead.get('persona_sender_name') or '').split()[0] 
+                       if lead and (lead.get('persona_sender_name') or '').strip() 
+                       else '')
+        
+        return {
+            "${global_data.call_direction}": conv_state.get("call_direction", "inbound"),
+            "${global_data.caller_name}": lead.get("first_name", "there"),
+            "${global_data.caller_phone}": phone,
+            "${global_data.persona_name}": persona_name,
+            "${global_data.caller_goal}": conv_state.get("caller_goal", ""),  # Empty default, not assumed
+            "${global_data.property_address}": lead.get("property_address", ""),
+            "${global_data.property_city}": lead.get("property_city", ""),
+            "${global_data.property_state}": lead.get("property_state", ""),
+            "${global_data.property_zip}": lead.get("property_zip", ""),
+            "${global_data.broker_name}": broker_name,
+            "${global_data.broker_company}": broker_company,
+        }
     
     # =========================================================================
     # TOOLS - Per Section 4.14 (The @tool Decorator)
@@ -1334,12 +1378,50 @@ When ready to book, call check_broker_availability() to get real-time available 
     )
     def change_context(self, args, raw_data):
         """
-        Per SDK Section 8.993: Use .swml_change_context() to switch to a named SWML context.
-        This allows explicit AI-controlled context transitions.
+        CONTEXT ISOLATION: Lazy-load node instructions on context switch.
+        
+        Per SDK manual line 23314-23315, chain .update_global_data() with .swml_change_context()
+        to update state then switch to pre-defined context (preserves tool scoping).
+        
+        Per SDK manual line 18227, use .remove_global_data() to clear stale keys.
+        
+        This enforces: "global_data may contain node instructions, but ONLY for ONE node at a time"
         """
         context_name = args.get("context_name", "")
-        logger.info(f"[BARBARA] change_context called: switching to '{context_name}'")
-        return SwaigFunctionResult(f"Switching to {context_name}").swml_change_context(context_name)
+        phone = raw_data.get("conversation_id", "")
+        
+        # Lazy-load: fetch ONLY this node's instructions from DB
+        cfg = get_node_config(context_name, "reverse_mortgage") or get_fallback_node_config(context_name)
+        instructions = cfg.get("instructions", f"Continue in {context_name} stage.")
+        
+        # Get placeholder values (set during on_swml_request, or rebuild if needed)
+        placeholder_values = getattr(self, '_placeholder_values', None)
+        if not placeholder_values:
+            # Fallback: rebuild placeholder values if not cached
+            lead = get_lead_by_phone(phone)
+            conv_state = get_conversation_state(phone)
+            placeholder_values = self._build_placeholder_values(lead, conv_state, phone)
+        
+        # Replace all placeholders with actual values
+        for placeholder, value in placeholder_values.items():
+            instructions = instructions.replace(placeholder, str(value))
+        
+        logger.info(f"[BARBARA] change_context: switching to '{context_name}' with fresh instructions")
+        
+        # PARANOID CLEANUP: Use SDK's .remove_global_data() to clear ALL other node
+        # instructions. This prevents stale data, SDK caching edge cases, or prompt bleed.
+        # Uses ALL_NODES constant to avoid hardcoding
+        keys_to_remove = [f"node_instructions_{n}" for n in ALL_NODES if n != context_name]
+        
+        return (
+            SwaigFunctionResult(f"Switching to {context_name}")
+            .remove_global_data(keys_to_remove)  # SDK method - clear all other nodes
+            .update_global_data({
+                f"node_instructions_{context_name}": instructions,
+                "current_context": context_name
+            })
+            .swml_change_context(context_name)  # Switch to pre-defined context (preserves tool scoping)
+        )
     
     # ----- LEAD TOOLS -----
     
