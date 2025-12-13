@@ -208,10 +208,17 @@ Rules:
         - called_id_num: Number that was called
         - direction: "inbound" or "outbound"
         """
-        # NOTE: Removed clear_pre_answer_verbs() and clear_post_answer_verbs() 
-        # - They were causing the phone-not-ringing bug on outbound calls
-        # - The old working code didn't have these calls
-        # - Verb accumulation may still be an issue, but calls need to work first
+        # CRITICAL: Clear accumulated state from previous calls (singleton pattern)
+        # The agent instance persists across calls, so verbs/sections accumulate without clearing
+        # NOTE: Recording settings (not these calls) were causing the phone-not-ringing bug
+        self.clear_post_answer_verbs()
+        self.clear_pre_answer_verbs()
+        
+        # Clear dynamic prompt sections to prevent accumulation
+        # Keep static sections (Role, Quote Tool Rule) added in __init__
+        if hasattr(self, 'pom') and hasattr(self.pom, 'sections'):
+            self.pom.sections = [s for s in self.pom.sections 
+                                 if s.get('title') not in ['Theme', 'Caller Context']]
         
         # NOTE: Prompt sections are added per-call with INLINE VALUES (not placeholders)
         # This ensures the AI has the correct data on the first turn
