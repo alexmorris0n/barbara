@@ -21,6 +21,10 @@ const SIGNALWIRE_API_TOKEN = process.env.SIGNALWIRE_API_TOKEN;
 const SIGNALWIRE_PHONE_NUMBER = process.env.SIGNALWIRE_PHONE_NUMBER;
 const SWAIG_AGENT_URL = process.env.SWAIG_AGENT_URL || 'https://barbara-agent.fly.dev/agent/barbara';
 
+// Supabase config for broker phone lookup
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
+
 // Initialize Fastify
 const app = Fastify({
   logger: {
@@ -66,6 +70,82 @@ app.register(require('@fastify/cors'), {
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 });
+
+/**
+ * Look up broker's assigned phone number from Supabase
+ * Matches MCP behavior - uses broker's phone instead of default
+ */
+async function getBrokerPhoneNumber(leadId, brokerId = null) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    app.log.warn('⚠️ Supabase not configured - using default phone');
+    return null;
+  }
+
+  try {
+    let brokerIdToUse = brokerId;
+
+    // If no broker_id provided, look it up from the lead
+    if (!brokerIdToUse && leadId) {
+      const leadUrl = `${SUPABASE_URL}/rest/v1/leads?id=eq.${leadId}&select=assigned_broker_id`;
+      app.log.info({ url: leadUrl }, '🔍 Fetching lead to get broker_id');
+      
+      const leadResponse = await fetch(leadUrl, {
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+        }
+      });
+      
+      if (!leadResponse.ok) {
+        app.log.warn({ status: leadResponse.status }, '⚠️ Lead lookup failed');
+        return null;
+      }
+      
+      const leads = await leadResponse.json();
+      if (leads.length > 0 && leads[0].assigned_broker_id) {
+        brokerIdToUse = leads[0].assigned_broker_id;
+        app.log.info({ lead_id: leadId, broker_id: brokerIdToUse }, '📍 Found broker for lead');
+      } else {
+        app.log.warn({ lead_id: leadId }, '⚠️ Lead found but no assigned_broker_id');
+      }
+    }
+
+    if (!brokerIdToUse) {
+      app.log.warn({ lead_id: leadId }, '⚠️ No broker_id found for lead');
+      return null;
+    }
+
+    // Look up the broker's phone number
+    const phoneUrl = `${SUPABASE_URL}/rest/v1/phone_numbers?assigned_broker_id=eq.${brokerIdToUse}&is_active=eq.true&select=phone_number,label&order=label.asc&limit=1`;
+    app.log.info({ url: phoneUrl }, '🔍 Fetching broker phone number');
+    
+    const phoneResponse = await fetch(phoneUrl, {
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`
+      }
+    });
+    
+    if (!phoneResponse.ok) {
+      app.log.warn({ status: phoneResponse.status }, '⚠️ Phone lookup failed');
+      return null;
+    }
+    
+    const phones = await phoneResponse.json();
+    if (phones.length > 0) {
+      const brokerPhone = phones[0].phone_number;
+      app.log.info({ broker_id: brokerIdToUse, phone: brokerPhone, label: phones[0].label }, '✅ Found broker phone');
+      return brokerPhone;
+    }
+    
+    app.log.warn({ broker_id: brokerIdToUse }, '⚠️ No phone number found for broker');
+    return null;
+    
+  } catch (err) {
+    app.log.error({ err: err.message }, '❌ Error looking up broker phone');
+    return null;
+  }
+}
 
 /**
  * Health Check Endpoint
@@ -179,10 +259,22 @@ app.post('/trigger-call', async (request, reply) => {
       agentUrl = url.toString();
     }
     
+    // Look up broker's assigned phone number (matches MCP behavior)
+    let fromPhone = from_phone;
+    if (!fromPhone && lead_id) {
+      const brokerPhone = await getBrokerPhoneNumber(lead_id);
+      if (brokerPhone) {
+        fromPhone = brokerPhone;
+        app.log.info({ broker_phone: brokerPhone }, '[trigger-call] Using broker assigned phone');
+      }
+    }
+    fromPhone = fromPhone || SIGNALWIRE_PHONE_NUMBER;
+    
     app.log.info({ 
       to_phone, 
       lead_id,
-      from_phone: from_phone || SIGNALWIRE_PHONE_NUMBER,
+      from_phone: fromPhone,
+      using_broker_phone: fromPhone !== SIGNALWIRE_PHONE_NUMBER,
       agent_url: agentUrl.replace(/:[^:@]+@/, ':***@')  // mask password in logs
     }, '[trigger-call] Creating outbound call via SignalWire Calling API');
     
@@ -200,9 +292,9 @@ app.post('/trigger-call', async (request, reply) => {
         command: 'dial',
         params: {
           url: agentUrl,
-          from: from_phone || SIGNALWIRE_PHONE_NUMBER,
+          from: fromPhone,
           to: to_phone,
-          caller_id: from_phone || SIGNALWIRE_PHONE_NUMBER,
+          caller_id: fromPhone,
           timeout: 60,
           max_duration: 3600
         }
