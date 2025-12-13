@@ -104,75 +104,10 @@ class BarbaraAgent(AgentBase):
             record_format="wav"
         )
         
-        # Base prompt section (required even with contexts per Section 6.8)
-        self.prompt_add_section(
-            "Role",
-            "You are Barbara, a warm and professional voice assistant helping homeowners explore reverse mortgage options."
-        )
-
-        # Guardrail: tool-first quoting. This is intentionally short and global (applies across contexts).
-        self.prompt_add_section(
-            "Quote Tool Rule",
-            """CRITICAL:
-- If you present any dollar-amount estimate (lump sum, monthly amount, available funds), you MUST call calculate_reverse_mortgage() first.
-- If you are missing inputs, ask for them (especially exact age and home value) and update the lead via update_lead_info(), then call calculate_reverse_mortgage().
-- After you present the quote to the caller, call mark_quote_presented()."""
-        )
-        
-        # Theme section - content comes from ${global_data.theme} which is set per-call
-        # This allows theme to be dynamic without accumulating sections
-        self.prompt_add_section("Theme", "${global_data.theme}")
-        
-        # Caller Context section - uses ${global_data.X} placeholders that SignalWire resolves at runtime
-        # IMPORTANT: Add this ONCE in __init__, not in on_swml_request
-        # The values come from set_global_data() which IS called per-request
-        # Per SDK Section 6.16.2.4: Use ${global_data.key} in prompts
-        self.prompt_add_section(
-            "Caller Context",
-            """You are speaking with ${global_data.caller_name} (phone: ${global_data.caller_phone}).
-
-=== CAMPAIGN INFO ===
-Persona (who sent email): ${global_data.persona_name}
-Caller's Goal: ${global_data.caller_goal}
-
-=== PROPERTY INFO ===
-Address: ${global_data.property_address}
-City: ${global_data.property_city}, ${global_data.property_state} ${global_data.property_zip}
-Estimated Value: ${global_data.property_value}
-Mortgage Balance: ${global_data.mortgage_balance}
-Estimated Equity: ${global_data.estimated_equity}
-Age: ${global_data.caller_age}
-
-=== VERIFICATION STATUS ===
-Phone Verified: ${global_data.phone_verified}
-Email Verified: ${global_data.email_verified}
-Address Verified: ${global_data.address_verified}
-Fully Verified: ${global_data.verified}
-
-=== QUALIFICATION STATUS ===
-Age 62+ Qualified: ${global_data.age_qualified}
-Homeowner Qualified: ${global_data.homeowner_qualified}
-Primary Residence Qualified: ${global_data.primary_residence_qualified}
-Equity Qualified: ${global_data.equity_qualified}
-Fully Qualified: ${global_data.qualified}
-
-=== CONVERSATION STATUS ===
-Greeted: ${global_data.greeted}
-Quote Presented: ${global_data.quote_presented}
-Ready to Book: ${global_data.ready_to_book}
-Appointment Booked: ${global_data.appointment_booked}
-Wrong Person: ${global_data.wrong_person}
-Has Objection: ${global_data.has_objection}
-
-=== ASSIGNED BROKER ===
-Name: ${global_data.broker_name}
-Company: ${global_data.broker_company}
-
-=== BOOKING ===
-Broker: ${global_data.broker_name}
-When ready to book, call check_broker_availability() to get real-time available slots.
-"""
-        )
+        # NOTE: ALL prompt sections (Role, Quote Tool Rule, Theme, Caller Context) are added
+        # in on_swml_request AFTER pom.clear() and set_global_data()
+        # This ensures ${global_data.X} placeholders resolve correctly on first AI turn
+        # Per SDK docs: "Clear prompts between calls - Use self.pom.clear() if reusing sections"
         
         # Add math skill per Section 5.18.3
         # Provides: calculate - Evaluate mathematical expressions
@@ -273,9 +208,23 @@ Rules:
         self.clear_pre_answer_verbs()
         self.clear_post_answer_verbs()
         
-        # NOTE: Prompt sections (Caller Context) are added in __init__ with ${global_data.X} placeholders
-        # that SignalWire resolves at runtime. Theme is added once via _theme_section_added flag.
-        # This prevents section accumulation without needing pom.clear() (which doesn't exist in SDK).
+        # CRITICAL: Clear prompt sections from previous requests
+        # Per SDK docs: "Clear prompts between calls - Use self.pom.clear() if reusing sections"
+        # This ensures ${global_data.X} placeholders are bound to THIS call's data
+        self.pom.clear()
+        
+        # Re-add static sections (cleared by pom.clear)
+        self.prompt_add_section(
+            "Role",
+            "You are Barbara, a warm and professional voice assistant helping homeowners explore reverse mortgage options."
+        )
+        self.prompt_add_section(
+            "Quote Tool Rule",
+            """CRITICAL:
+- If you present any dollar-amount estimate (lump sum, monthly amount, available funds), you MUST call calculate_reverse_mortgage() first.
+- If you are missing inputs, ask for them (especially exact age and home value) and update the lead via update_lead_info(), then call calculate_reverse_mortgage().
+- After you present the quote to the caller, call mark_quote_presented()."""
+        )
         
         # Extract call data from SignalWire request
         call_data = request_data.get("call", {})
@@ -485,6 +434,62 @@ Rules:
             # Theme (loaded from DB, can vary per vertical)
             "theme": theme_prompt or '',
         })
+
+        # ---------------------------------------------------------------------
+        # Add Theme and Caller Context sections AFTER set_global_data
+        # This ensures ${global_data.X} placeholders resolve correctly on first AI turn
+        # Per research: "set_global_data" must happen BEFORE prompt sections are added
+        # ---------------------------------------------------------------------
+        self.prompt_add_section("Theme", "${global_data.theme}")
+        
+        self.prompt_add_section(
+            "Caller Context",
+            """You are speaking with ${global_data.caller_name} (phone: ${global_data.caller_phone}).
+
+=== CAMPAIGN INFO ===
+Persona (who sent email): ${global_data.persona_name}
+Caller's Goal: ${global_data.caller_goal}
+
+=== PROPERTY INFO ===
+Address: ${global_data.property_address}
+City: ${global_data.property_city}, ${global_data.property_state} ${global_data.property_zip}
+Estimated Value: ${global_data.property_value}
+Mortgage Balance: ${global_data.mortgage_balance}
+Estimated Equity: ${global_data.estimated_equity}
+Age: ${global_data.caller_age}
+
+=== VERIFICATION STATUS ===
+Phone Verified: ${global_data.phone_verified}
+Email Verified: ${global_data.email_verified}
+Address Verified: ${global_data.address_verified}
+Fully Verified: ${global_data.verified}
+
+=== QUALIFICATION STATUS ===
+Age 62+ Qualified: ${global_data.age_qualified}
+Homeowner Qualified: ${global_data.homeowner_qualified}
+Primary Residence Qualified: ${global_data.primary_residence_qualified}
+Equity Qualified: ${global_data.equity_qualified}
+Fully Qualified: ${global_data.qualified}
+
+=== CONVERSATION STATUS ===
+Greeted: ${global_data.greeted}
+Quote Presented: ${global_data.quote_presented}
+Ready to Book: ${global_data.ready_to_book}
+Appointment Booked: ${global_data.appointment_booked}
+Wrong Person: ${global_data.wrong_person}
+Has Objection: ${global_data.has_objection}
+
+=== ASSIGNED BROKER ===
+Name: ${global_data.broker_name}
+Company: ${global_data.broker_company}
+
+=== BOOKING ===
+Broker: ${global_data.broker_name}
+When ready to book, call check_broker_availability() to get real-time available slots.
+"""
+        )
+        
+        logger.info("[BARBARA] Added Theme and Caller Context sections after set_global_data")
 
         # ---------------------------------------------------------------------
         # Dynamic node prompts (Vue live-edit support)
