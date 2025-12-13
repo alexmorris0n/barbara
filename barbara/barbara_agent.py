@@ -216,9 +216,13 @@ Rules:
         
         # Clear dynamic prompt sections to prevent accumulation
         # Keep static sections (Role, Quote Tool Rule) added in __init__
+        # NOTE: Section objects have .title attribute, not .get() method
         if hasattr(self, 'pom') and hasattr(self.pom, 'sections'):
-            self.pom.sections = [s for s in self.pom.sections 
-                                 if s.get('title') not in ['Theme', 'Caller Context']]
+            try:
+                self.pom.sections = [s for s in self.pom.sections 
+                                     if getattr(s, 'title', None) not in ['Theme', 'Caller Context']]
+            except Exception as e:
+                logger.warning(f"[BARBARA] Could not filter pom.sections: {e}")
         
         # NOTE: Prompt sections are added per-call with INLINE VALUES (not placeholders)
         # This ensures the AI has the correct data on the first turn
