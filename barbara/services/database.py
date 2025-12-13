@@ -285,8 +285,10 @@ def get_node_config(node_name: str, vertical: str = "reverse_mortgage") -> Optio
             # Vue edits them separately, but we combine for the agent
             instructions = content.get('instructions', '')
             routing = content.get('routing', '')
+            logger.info(f"[DB] Node {node_name}: routing field = '{routing[:50]}...' (len={len(routing)})" if routing else f"[DB] Node {node_name}: routing field is EMPTY")
             if routing:
                 instructions = f"{instructions}\n\n=== ROUTING ===\n{routing}"
+                logger.info(f"[DB] Node {node_name}: Appended routing section")
             
             config = {
                 'instructions': instructions,
