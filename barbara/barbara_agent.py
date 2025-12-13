@@ -236,7 +236,9 @@ Rules:
         
         # Extract call data from SignalWire request
         call_data = request_data.get("call", {})
-        direction = call_data.get("direction") or request_data.get("direction", "inbound")
+        # Normalize direction to lowercase for consistent comparisons throughout
+        raw_direction = call_data.get("direction") or request_data.get("direction", "inbound")
+        direction = raw_direction.lower() if isinstance(raw_direction, str) else "inbound"
         
         # Get query params from URL (for outbound calls with lead_id)
         # DEBUG: Log what we receive to diagnose outbound call issues
@@ -317,16 +319,11 @@ Rules:
             })
             logger.info("[BARBARA] Added US ringback for inbound call")
         
-        # POST-ANSWER: Immediate greeting for OUTBOUND calls
-        # This plays BEFORE the AI loads, filling the silence gap
-        # Prevents leads from saying "Hello?" multiple times and hanging up
+        # OUTBOUND: No pre-recorded greeting
+        # AI starts directly with "Hi, may I speak with [name]?"
+        # This is more natural and allows the AI to handle the full conversation flow
         if direction == "outbound":
-            outbound_voice = models.get("tts_voice_string", "elevenlabs.rachel")
-            self.add_post_answer_verb("play", {
-                "url": "say:Hi! This is Barbara from Equity Connect. How are you today?",
-                "say_voice": outbound_voice
-            })
-            logger.info(f"[BARBARA] Added outbound greeting with voice: {outbound_voice}")
+            logger.info("[BARBARA] Outbound call - AI will greet directly (no pre-recorded message)")
         
         # Load lead data from database
         # For OUTBOUND: try lead_id from URL first, then fall back to phone lookup
@@ -520,7 +517,7 @@ Rules:
         self.prompt_add_section(
             "Caller Context",
             f"""=== CALL TYPE: {direction.upper()} ===
-{"FOR OUTBOUND: The greeting already played. Do NOT re-introduce yourself or ask 'how are you' again." if direction == "outbound" else "FOR INBOUND: Introduce yourself first."}
+{"FOR OUTBOUND: YOU start the conversation. Say 'Hi, may I speak with [name]?' first." if direction == "outbound" else "FOR INBOUND: Introduce yourself first."}
 
 You are speaking with {caller_name} (phone: {caller_phone}).
 
