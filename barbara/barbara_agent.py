@@ -282,15 +282,29 @@ Rules:
         direction = call_data.get("direction") or request_data.get("direction", "inbound")
         
         # Get query params from URL (for outbound calls with lead_id)
+        # DEBUG: Log what we receive to diagnose outbound call issues
         query_params = {}
+        logger.info(f"[BARBARA] Request object: type={type(request)}, is_none={request is None}")
         if request:
             try:
-                query_params = dict(request.query_params) if hasattr(request, 'query_params') else {}
-            except:
-                pass
+                if hasattr(request, 'query_params'):
+                    query_params = dict(request.query_params)
+                    logger.info(f"[BARBARA] ✅ Query params extracted: {query_params}")
+                else:
+                    # Log available attributes to debug
+                    attrs = [a for a in dir(request) if not a.startswith('_')][:15]
+                    logger.warning(f"[BARBARA] ⚠️ Request has no query_params. Available attrs: {attrs}")
+                    # Try alternative: check if URL has query string
+                    if hasattr(request, 'url'):
+                        logger.info(f"[BARBARA] Request URL: {request.url}")
+            except Exception as e:
+                logger.error(f"[BARBARA] ❌ Failed to extract query_params: {type(e).__name__}: {e}")
+        else:
+            logger.warning(f"[BARBARA] ⚠️ Request is None - query params unavailable")
         
         lead_id_from_url = query_params.get("lead_id")
-        direction_from_url = query_params.get("direction", direction)
+        direction_from_url = query_params.get("direction")
+        logger.info(f"[BARBARA] URL params: lead_id={lead_id_from_url}, direction={direction_from_url}")
         
         # Use direction from URL if provided (more reliable for outbound)
         if direction_from_url:
