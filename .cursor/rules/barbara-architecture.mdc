@@ -5,6 +5,29 @@ Barbara is a SignalWire AI voice agent for reverse mortgage lead qualification a
 
 ---
 
+## ⚠️ CRITICAL: No Cross-Node References
+
+**NEVER mention other nodes or their responsibilities in any prompt.**
+
+Each node's prompt must be completely self-contained. The AI should have NO idea that other nodes exist or what they do.
+
+### ❌ FORBIDDEN in prompts:
+- "Qualification (age, value, mortgage) happens in QUALIFY" 
+- "The ANSWER node handles questions"
+- "BOOK will schedule the appointment"
+- "This is handled in another stage"
+- Any description of what another node does
+
+### ✅ ALLOWED:
+- `change_context("verify")` - routing calls only (no description)
+- `change_context("qualify")` - just the function call
+- Tool calls that belong to THIS node only
+
+### Why this matters:
+Mentioning other nodes plants ideas. If GREET says "qualification happens in QUALIFY", the AI may start asking qualification questions in GREET. Each node must be isolated - the AI only knows what IT should do, nothing else.
+
+---
+
 ## Prompt Architecture
 
 ### Structure (assembled by Python)
@@ -89,10 +112,12 @@ def change_context(context_name):
 - Final line: `Do NOT say anything after change_context().`
 
 ### Avoid
+- **Cross-node references** (see CRITICAL section above)
 - Separate ROUTING/FORBIDDEN/WHEN COMPLETE sections
 - "restart from step 1" (restate exact utterance instead)
 - Vague phrases like "end call gracefully" (use explicit speech)
 - Abstract instructions like "acknowledge based on goal type"
+- Negative language that mentions other nodes (e.g., "Do NOT ask about age - that's in QUALIFY")
 
 ---
 

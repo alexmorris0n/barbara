@@ -450,7 +450,7 @@ def get_fallback_theme() -> str:
 def get_fallback_node_config(node_name: str) -> dict:
     """Get fallback node config (for external callers)"""
     return FALLBACK_NODE_CONFIG.get(node_name, {
-        "instructions": f"You are Barbara. Continue the conversation naturally in the {node_name} stage.",
+        "instructions": "You are Barbara. Continue the conversation naturally.",
         "valid_contexts": [],
         "functions": [],
         "step_criteria": ""
