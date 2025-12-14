@@ -72,10 +72,8 @@ ${global_data.call_direction}
 
 6. After response:
    → Call set_caller_goal(goal, goal_details)
-   → Say ONE brief acknowledgment sentence
-   → Do NOT elaborate
-   → Do NOT ask follow-up questions
-   → Call change_context("verify")
+   → Say ONE brief acknowledgment (max 10 words, e.g. "Got it, that makes sense.")
+   → Call change_context("verify") immediately
 
 7. If wrong person:
    → Call mark_wrong_person()
@@ -100,8 +98,8 @@ ${global_data.call_direction}
      Say: "What got you interested in learning more?"
      → Wait
      → Call set_caller_goal()
-     → Do NOT elaborate
-     → Call change_context("verify")
+     → Say ONE brief acknowledgment (max 10 words)
+     → Call change_context("verify") immediately
 
 3. If new caller:
    → Say: "May I ask who I am speaking with?"
@@ -110,11 +108,10 @@ ${global_data.call_direction}
    → Say: "What got you interested in learning about reverse mortgages?"
    → Wait
    → Call set_caller_goal()
-   → Say ONE brief acknowledgment
-   → Do NOT ask further questions
-   → Call change_context("verify")
+   → Say ONE brief acknowledgment (max 10 words)
+   → Call change_context("verify") immediately
 
-Do NOT say anything after change_context().""",
+After acknowledgment, call change_context() immediately.""",
         "valid_contexts": ["answer", "verify", "quote", "qualify", "goodbye", "objections", "book"],
         "functions": ["mark_greeted", "mark_wrong_person", "set_caller_goal", "change_context"]
     },
@@ -240,11 +237,9 @@ NEVER estimate or make up numbers - the tool provides figures.""",
 
 3. Answer using ONLY tool response
    → 2-3 sentences max
-   → Do NOT invent information
 
-4. Say EXACTLY: "Does that help? Any other questions?"
+4. Say: "Does that help? Any other questions?"
    → Wait
-   → Do NOT say "Would you like more information" or any variation
 
 5. If more questions:
    → Go to step 1
@@ -259,8 +254,9 @@ NEVER estimate or make up numbers - the tool provides figures.""",
 8. If concerns:
    → Call change_context("objections")
 
-Do NOT say anything after change_context().
-Do NOT improvise farewell messages - route to book or goodbye.""",
+After "Great!", call change_context() immediately.
+Use only tool response for answers.
+Follow-up is always: "Does that help? Any other questions?" """,
         "valid_contexts": ["goodbye", "book", "objections", "quote"],
         "functions": ["search_knowledge", "change_context"]
     },
