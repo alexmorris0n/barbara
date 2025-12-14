@@ -2,7 +2,7 @@
 # Deploy: fly deploy --app barbara-mcp
 
 app = "barbara-mcp"
-primary_region = "sjc"
+primary_region = "iad"
 
 [build]
   dockerfile = "Dockerfile"
@@ -10,7 +10,6 @@ primary_region = "sjc"
 [env]
   PORT = "3000"
   HOST = "0.0.0.0"
-  # BRIDGE_URL set via fly secrets (points to barbara-swaig.fly.dev)
 
 [http_service]
   internal_port = 3000
@@ -21,8 +20,8 @@ primary_region = "sjc"
 
   [http_service.concurrency]
     type = "requests"
-    hard_limit = 250
-    soft_limit = 200
+    soft_limit = 20
+    hard_limit = 25
 
 [[http_service.checks]]
   grace_period = "10s"
@@ -30,6 +29,11 @@ primary_region = "sjc"
   method = "GET"
   timeout = "5s"
   path = "/health"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
 
 
 
