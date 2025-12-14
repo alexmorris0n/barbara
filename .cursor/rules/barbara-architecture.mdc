@@ -1,0 +1,148 @@
+# Barbara Agent Architecture
+
+## Overview
+Barbara is a SignalWire AI voice agent for reverse mortgage lead qualification and appointment booking. Uses GPT-4o-mini with 4o-mini optimized prompts.
+
+---
+
+## Prompt Architecture
+
+### Structure (assembled by Python)
+```
+You are only responsible for actions explicitly listed in this stage.
+
+=== PURPOSE ===
+[role field from DB]
+
+[instructions field from DB]
+```
+
+### Key Rules
+- **NO separate ROUTING section** - routing is inline in instructions
+- **NO FORBIDDEN ACTIONS section** - constraints are inline (e.g., "→ Do NOT elaborate")
+- **NO WHEN COMPLETE section** - already covered in numbered steps
+- Prompts end with: `Do NOT say anything after change_context().`
+
+### Database Tables
+- `prompts` - node definitions (node_name, vertical)
+- `prompt_versions` - versioned content with `is_active` flag
+  - `content.role` - PURPOSE (1 sentence)
+  - `content.instructions` - numbered steps
+  - `content.functions` - available tools
+- `theme_prompts` - global personality/rules
+- `contexts_config` - enter/exit fillers
+
+### Placeholder Resolution
+Placeholders like `${global_data.caller_name}` are replaced in Python BEFORE sending to SignalWire. The LLM sees actual values, not placeholders.
+
+---
+
+## Context System
+
+### Nodes (conversation stages)
+1. `greet` - Identity + goal capture
+2. `verify` - Address confirmation
+3. `qualify` - Age/value/mortgage collection
+4. `quote` - Calculate + present quote
+5. `answer` - Answer questions from KB
+6. `objections` - Handle concerns
+7. `book` - Schedule appointment
+8. `goodbye` - End call
+
+### Context Isolation
+- Only ONE node's instructions loaded at a time
+- `change_context("node")` lazy-loads target node's instructions
+- Clears previous node instructions to prevent hallucination
+- Tools are scoped per-node (e.g., `calculate_reverse_mortgage` only in `quote`)
+
+### change_context() Flow
+```python
+def change_context(context_name):
+    # 1. Load target node instructions from DB
+    # 2. Replace placeholders with actual values
+    # 3. Remove old node instructions from global_data
+    # 4. Set new instructions + current_context
+    # 5. Call swml_change_context() for tool scoping
+```
+
+---
+
+## 4o-mini Optimization Rules
+
+### Prompt Format
+```
+1. Say: "..."
+   → Wait
+
+2. If X:
+   → Call tool()
+   → Do NOT elaborate
+   → Call change_context("next")
+```
+
+### Key Principles
+- Numbered steps (mechanical)
+- Short `→ Wait` instead of "→ Wait for response"
+- Constraints inline: `→ Do NOT elaborate`
+- Tool calls once per path (no duplicates)
+- All branches terminate (either `change_context()` or `→ Stop speaking`)
+- Final line: `Do NOT say anything after change_context().`
+
+### Avoid
+- Separate ROUTING/FORBIDDEN/WHEN COMPLETE sections
+- "restart from step 1" (restate exact utterance instead)
+- Vague phrases like "end call gracefully" (use explicit speech)
+- Abstract instructions like "acknowledge based on goal type"
+
+---
+
+## Deployment
+
+### Git-Only (NO direct Fly.io)
+All deployments via git commit/push which triggers CI/CD:
+```bash
+git add -A
+git commit -m "message"
+git push
+```
+NEVER use `fly deploy` directly.
+
+### Key Files
+- `barbara/barbara_agent.py` - Main agent, `on_swml_request`, tools
+- `barbara/services/database.py` - DB queries, prompt assembly
+- `barbara/services/fallbacks.py` - Emergency fallback prompts
+- `barbara/tools/booking.py` - Booking + availability
+- `barbara/tools/flags.py` - State management tools
+- `portal/src/views/admin/Verticals.vue` - Prompt editor UI
+
+---
+
+## Common Tasks
+
+### Update a node's prompt
+1. Edit in Supabase `prompt_versions` table OR Vue portal
+2. Just edit `role` and `instructions` fields
+3. No need to touch Python code
+
+### Add a new tool
+1. Add handler in `barbara/tools/`
+2. Register in `barbara_agent.py`
+3. Add to node's `functions` array in DB
+
+### Test changes
+1. Commit and push
+2. Wait for deploy (~2 min)
+3. Trigger test call from n8n MCP
+
+---
+
+## Webhooks
+
+### Manual Booking Webhook
+Fires on any booking failure:
+- URL: `https://n8n.instaroute.com/webhook/sw_manual_booking`
+- Triggers: Nylas error, no slots, lead not found, exception
+
+### Persona SMS Webhook
+Fires after successful booking (if SMS consent):
+- URL: `https://n8n.instaroute.com/webhook/persona-sms`
