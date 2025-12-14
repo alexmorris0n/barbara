@@ -32,7 +32,7 @@ from services.database import (
 logger = logging.getLogger(__name__)
 
 NYLAS_API_KEY = os.getenv("NYLAS_API_KEY")
-N8N_MANUAL_BOOKING_WEBHOOK = os.getenv("N8N_MANUAL_BOOKING_WEBHOOK")
+N8N_MANUAL_BOOKING_WEBHOOK = os.getenv("N8N_MANUAL_BOOKING_WEBHOOK", "https://n8n.instaroute.com/webhook/sw_manual_booking")
 
 
 def _trigger_manual_booking_webhook(
