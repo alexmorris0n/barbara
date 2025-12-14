@@ -284,7 +284,7 @@ After implementing Steps 1-3:
 If this fails, revert to the previous commit (current state is clean):
 
 ```bash
-git revert HEAD
+tried to git revert HEAD
 ```
 
 The database routing changes are separate and can stay as-is.
