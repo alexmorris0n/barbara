@@ -105,6 +105,8 @@ function normalizePhoneNumber(phone) {
 
 /**
  * Check if a call was recently made to prevent duplicates
+ * Returns true if duplicate, false if allowed
+ * NOTE: This only checks - does NOT set the rate limit (that happens after successful call)
  */
 function isDuplicateCall(toPhone, fromPhone) {
   const key = `${toPhone}:${fromPhone}`;
@@ -114,20 +116,33 @@ function isDuplicateCall(toPhone, fromPhone) {
     return true;
   }
   
-  // Record this call
-  recentCalls.set(key, Date.now());
+  return false;
+}
+
+/**
+ * Record a successful call to prevent duplicates
+ * This should ONLY be called after the API call succeeds
+ * Uses atomic check-and-set pattern to prevent race conditions
+ */
+function recordSuccessfulCall(toPhone, fromPhone) {
+  const key = `${toPhone}:${fromPhone}`;
+  const now = Date.now();
+  
+  // Atomic check-and-set: only set if key doesn't exist or has expired
+  // This prevents race condition where two concurrent requests both pass the check
+  const existingTime = recentCalls.get(key);
+  if (!existingTime || (now - existingTime) >= DUPLICATE_CALL_WINDOW_MS) {
+    recentCalls.set(key, now);
+  }
   
   // Clean up old entries periodically
   if (recentCalls.size > 1000) {
-    const now = Date.now();
     for (const [k, v] of recentCalls.entries()) {
       if (now - v > DUPLICATE_CALL_WINDOW_MS) {
         recentCalls.delete(k);
       }
     }
   }
-  
-  return false;
 }
 
 /**
@@ -372,25 +387,45 @@ app.post('/trigger-call', async (request, reply) => {
       from_phone: normalizedFrom,
       using_broker_phone: normalizedFrom !== normalizePhoneNumber(SIGNALWIRE_PHONE_NUMBER),
       agent_url: agentUrl.replace(/:[^:@]+@/, ':***@')  // mask password in logs
-    }, '[trigger-call] Creating outbound call via SignalWire Relay REST API');
+    }, '[trigger-call] Creating outbound call via SignalWire Calling API (SWML script)');
     
     const auth = Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64');
     
-    // Use Relay REST API for outbound calls with SWML script URL
-    // This is the correct endpoint for outbound calls with AI agents
-    const response = await fetch(`${SIGNALWIRE_SPACE_URL}/api/relay/rest/calls`, {
+    // Use SignalWire Calling API for outbound calls with SWML script URL
+    // This is the SWML-native API endpoint (matches barbara-mcp implementation)
+    // Endpoint format: https://{space}.signalwire.com/api/calling/calls
+    // For SWML scripts, the 'url' parameter points to your SWML endpoint
+    const callingEndpoint = `${SIGNALWIRE_SPACE_URL}/api/calling/calls`;
+    
+    app.log.debug({ 
+      endpoint: callingEndpoint,
+      to: normalizedTo,
+      from: normalizedFrom,
+      url: agentUrl.replace(/:[^:@]+@/, ':***@')
+    }, '[trigger-call] SignalWire Calling API request details');
+    
+    // Build JSON payload matching barbara-mcp implementation
+    // SignalWire Calling API uses 'command: dial' with nested params
+    const callPayload = {
+      command: 'dial',
+      params: {
+        url: agentUrl,  // SWML endpoint URL - SignalWire will POST to this URL to get SWML
+        from: normalizedFrom,
+        to: normalizedTo,
+        caller_id: normalizedFrom,
+        timeout: 30,  // Reduced timeout to prevent long ring times (30 seconds)
+        max_duration: 3600
+      }
+    };
+    
+    const response = await fetch(callingEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Accept': 'application/json',
         'Authorization': `Basic ${auth}`
       },
-      body: JSON.stringify({
-        to: normalizedTo,
-        from: normalizedFrom,
-        url: agentUrl,
-        timeout: 30  // Reduced timeout to prevent long ring times
-      })
+      body: JSON.stringify(callPayload)
     });
     
     const responseText = await response.text();
@@ -409,22 +444,29 @@ app.post('/trigger-call', async (request, reply) => {
       app.log.error({ 
         result, 
         status: response.status,
+        statusText: response.statusText,
+        endpoint: callingEndpoint,
         to: normalizedTo,
-        from: normalizedFrom
+        from: normalizedFrom,
+        responseText: responseText.substring(0, 500) // First 500 chars of response
       }, '[trigger-call] SignalWire call creation failed');
       
       // Provide helpful error message
-      let errorMsg = result.message || result.error || `SignalWire API error (${response.status})`;
+      let errorMsg = result.message || result.error || result.Message || `SignalWire API error (${response.status})`;
       if (response.status === 404) {
-        errorMsg += '. The API endpoint may be incorrect. Verify the SignalWire API endpoint for outbound calls.';
+        errorMsg += `. The API endpoint may be incorrect. Tried: ${callingEndpoint}. ` +
+                   `Verify your SIGNALWIRE_SPACE_URL format (should be https://your-space.signalwire.com).`;
       } else if (response.status === 400) {
         errorMsg += '. Check that phone numbers are in E.164 format and the URL is accessible.';
+      } else if (response.status === 401) {
+        errorMsg += '. Check your SIGNALWIRE_PROJECT_ID and SIGNALWIRE_API_TOKEN credentials.';
       }
       
       return reply.code(500).send({
         success: false,
         error: errorMsg,
-        details: result
+        details: result,
+        endpoint_tried: callingEndpoint
       });
     }
     
@@ -433,6 +475,10 @@ app.post('/trigger-call', async (request, reply) => {
       app.log.warn({ result }, '[trigger-call] No call ID in response');
     }
     
+    // Only record successful call AFTER API call succeeds
+    // This prevents rate limiting if validation or API call fails
+    recordSuccessfulCall(normalizedTo, normalizedFrom);
+    
     app.log.info({ call_id: callId, to: normalizedTo, from: normalizedFrom }, '[trigger-call] Call created successfully');
     
     return reply.code(200).send({
@@ -440,7 +486,7 @@ app.post('/trigger-call', async (request, reply) => {
       call_id: callId,
       to: normalizedTo,
       from: normalizedFrom,
-      message: 'Outbound call initiated via SignalWire Relay REST API'
+      message: 'Outbound call initiated via SignalWire Calling API (SWML script)'
     });
     
   } catch (err) {
