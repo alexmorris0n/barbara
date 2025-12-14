@@ -759,7 +759,6 @@ When ready to book, call check_broker_availability() to get real-time available 
             # The real text is injected via ${global_data.node_instructions_<node>} in on_swml_request().
             valid_contexts = config.get('valid_contexts', [])
             functions = config.get('functions', [])
-            step_criteria = config.get('step_criteria', '')
             
             # Create context
             # Per Section 6.10 (Context Configuration)
@@ -787,21 +786,11 @@ When ready to book, call check_broker_availability() to get real-time available 
             
             # Add single step per context (Barbara's nodes are single-step)
             # Per Section 6.9 (Step Configuration)
+            # NOTE: We do NOT use set_step_criteria() because it makes SignalWire inject
+            # "Current Step" language that confuses the AI into calling next_step instead
+            # of our change_context tool. All routing logic is inline in our prompts.
             step = context.add_step("main")
             step.set_text(f"${{global_data.node_instructions_{node_name}}}")
-            
-            # Add DB-provided criteria; for QUOTE, enforce a hard "tool-first" rule even if the DB is lax.
-            if node_name == "quote":
-                quote_criteria = (step_criteria or "").strip()
-                if quote_criteria:
-                    quote_criteria += "\n\n"
-                quote_criteria += (
-                    "CRITICAL: Before presenting any dollar amounts, call calculate_reverse_mortgage(). "
-                    "Do not estimate. If inputs are missing, ask for age and home value, update_lead_info(), then calculate."
-                )
-                step.set_step_criteria(quote_criteria)
-            elif step_criteria:
-                step.set_step_criteria(step_criteria)
             
             if valid_contexts:
                 step.set_valid_contexts(valid_contexts)

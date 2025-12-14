@@ -116,8 +116,7 @@ ${global_data.call_direction}
 
 Do NOT say anything after change_context().""",
         "valid_contexts": ["answer", "verify", "quote", "qualify", "goodbye", "objections", "book"],
-        "functions": ["mark_greeted", "mark_wrong_person", "set_caller_goal", "change_context"],
-        "step_criteria": "Identity confirmed, goal captured, mark_greeted() called."
+        "functions": ["mark_greeted", "mark_wrong_person", "set_caller_goal", "change_context"]
     },
     "verify": {
         "instructions": """1. Say: "I have your property at ${global_data.property_address} in ${global_data.property_city} - is that right?"
@@ -147,8 +146,7 @@ Do NOT say anything after change_context().""",
 
 Do NOT say anything after change_context().""",
         "valid_contexts": ["qualify", "answer", "quote", "objections"],
-        "functions": ["update_lead_info", "mark_address_verified", "change_context"],
-        "step_criteria": "Property confirmed."
+        "functions": ["update_lead_info", "mark_address_verified", "change_context"]
     },
     "qualify": {
         "instructions": """1. Say: "Are you 62 or older?"
@@ -180,11 +178,12 @@ Do NOT say anything after change_context().""",
    → MORTGAGE_BALANCE = 0
    → Say: "Nice, that helps."
 
-8. Calculate EQUITY = HOME_VALUE - MORTGAGE_BALANCE
+8. IMMEDIATELY after getting mortgage info:
+   → Calculate EQUITY = HOME_VALUE - MORTGAGE_BALANCE
    → Call update_lead_info(age, property_value, mortgage_balance, estimated_equity)
    → Call mark_equity_qualified()
-   → Do NOT say anything
    → Call change_context("quote")
+   → STOP - do not say anything else
 
 9. If caller raises concern:
    → Call change_context("objections")
@@ -192,10 +191,11 @@ Do NOT say anything after change_context().""",
 10. If caller asks question:
     → Call change_context("answer")
 
-Do NOT say anything after change_context().""",
+Do NOT say anything after change_context().
+Do NOT use next_step - always use change_context().
+After step 7, you MUST immediately do step 8 - no waiting.""",
         "valid_contexts": ["goodbye", "quote", "objections", "answer"],
-        "functions": ["mark_age_qualified", "mark_equity_qualified", "update_lead_info", "change_context"],
-        "step_criteria": "Age 62+, home value, mortgage collected."
+        "functions": ["mark_age_qualified", "mark_equity_qualified", "update_lead_info", "change_context"]
     },
     "quote": {
         "instructions": """1. If age, home_value, or mortgage_balance missing:
@@ -227,11 +227,10 @@ Do NOT say anything after change_context().""",
    → Call change_context("objections")
 
 Do NOT say anything after change_context().
-ALWAYS use numbers from calculate_reverse_mortgage.
-NEVER say "I cannot provide figures".""",
+ALWAYS call calculate_reverse_mortgage() BEFORE mentioning any dollar amount.
+NEVER estimate or make up numbers - the tool provides figures.""",
         "valid_contexts": ["answer", "book", "goodbye", "objections", "qualify"],
-        "functions": ["calculate_reverse_mortgage", "mark_quote_presented", "change_context"],
-        "step_criteria": "Quote presented with tool numbers."
+        "functions": ["calculate_reverse_mortgage", "mark_quote_presented", "change_context"]
     },
     "answer": {
         "instructions": """1. Listen to question
@@ -243,8 +242,9 @@ NEVER say "I cannot provide figures".""",
    → 2-3 sentences max
    → Do NOT invent information
 
-4. Say: "Does that help? Any other questions?"
+4. Say EXACTLY: "Does that help? Any other questions?"
    → Wait
+   → Do NOT say "Would you like more information" or any variation
 
 5. If more questions:
    → Go to step 1
@@ -259,10 +259,10 @@ NEVER say "I cannot provide figures".""",
 8. If concerns:
    → Call change_context("objections")
 
-Do NOT say anything after change_context().""",
+Do NOT say anything after change_context().
+Do NOT improvise farewell messages - route to book or goodbye.""",
         "valid_contexts": ["goodbye", "book", "objections", "quote"],
-        "functions": ["search_knowledge", "change_context"],
-        "step_criteria": "Question answered."
+        "functions": ["search_knowledge", "change_context"]
     },
     "objections": {
         "instructions": """1. Listen to concern
@@ -293,8 +293,7 @@ Do NOT say anything after change_context().""",
 
 Do NOT say anything after change_context().""",
         "valid_contexts": ["answer", "book", "goodbye", "quote"],
-        "functions": ["search_knowledge", "change_context"],
-        "step_criteria": "Concerns addressed."
+        "functions": ["search_knowledge", "change_context"]
     },
     "book": {
         "instructions": """1. Call check_broker_availability()
@@ -332,8 +331,7 @@ Do NOT say anything after change_context().""",
 
 Do NOT say anything after change_context().""",
         "valid_contexts": ["goodbye", "answer", "objections", "quote"],
-        "functions": ["check_broker_availability", "book_appointment", "mark_sms_consent", "change_context"],
-        "step_criteria": "Appointment booked or declined."
+        "functions": ["check_broker_availability", "book_appointment", "mark_sms_consent", "change_context"]
     },
     "goodbye": {
         "instructions": """1. If appointment booked:
@@ -366,14 +364,12 @@ Do NOT say anything after change_context().""",
 
 Do NOT say anything after change_context().""",
         "valid_contexts": ["answer", "greet", "book", "objections", "quote"],
-        "functions": ["change_context"],
-        "step_criteria": "Farewell complete."
+        "functions": ["change_context"]
     },
     "end": {
         "instructions": "Call is ending. No action needed.",
         "valid_contexts": [],
-        "functions": [],
-        "step_criteria": "Terminal state. Call ends here."
+        "functions": []
     }
 }
 
