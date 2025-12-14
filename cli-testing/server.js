@@ -21,6 +21,10 @@ const SIGNALWIRE_API_TOKEN = process.env.SIGNALWIRE_API_TOKEN;
 const SIGNALWIRE_PHONE_NUMBER = process.env.SIGNALWIRE_PHONE_NUMBER;
 const SWAIG_AGENT_URL = process.env.SWAIG_AGENT_URL || 'https://barbara-agent.fly.dev/agent/barbara';
 
+// In-memory cache to prevent duplicate calls (cleared after 5 minutes)
+const recentCalls = new Map();
+const DUPLICATE_CALL_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+
 // Supabase config for broker phone lookup
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
@@ -70,6 +74,61 @@ app.register(require('@fastify/cors'), {
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']
 });
+
+/**
+ * Normalize phone number to E.164 format: +1XXXXXXXXXX
+ * Handles: +16505300051, 16505300051, 6505300051, (650) 530-0051
+ * Returns null if invalid
+ */
+function normalizePhoneNumber(phone) {
+  if (!phone || typeof phone !== 'string') {
+    return null;
+  }
+  
+  // Remove all non-digit characters
+  const digits = phone.replace(/\D/g, '');
+  
+  // If 11 digits starting with 1, strip the country code
+  let normalized = digits;
+  if (digits.length === 11 && digits.startsWith('1')) {
+    normalized = digits.substring(1);
+  }
+  
+  // Must be exactly 10 digits for US numbers
+  if (normalized.length !== 10) {
+    return null;
+  }
+  
+  // Return E.164 format with +1 prefix
+  return `+1${normalized}`;
+}
+
+/**
+ * Check if a call was recently made to prevent duplicates
+ */
+function isDuplicateCall(toPhone, fromPhone) {
+  const key = `${toPhone}:${fromPhone}`;
+  const lastCallTime = recentCalls.get(key);
+  
+  if (lastCallTime && (Date.now() - lastCallTime) < DUPLICATE_CALL_WINDOW_MS) {
+    return true;
+  }
+  
+  // Record this call
+  recentCalls.set(key, Date.now());
+  
+  // Clean up old entries periodically
+  if (recentCalls.size > 1000) {
+    const now = Date.now();
+    for (const [k, v] of recentCalls.entries()) {
+      if (now - v > DUPLICATE_CALL_WINDOW_MS) {
+        recentCalls.delete(k);
+      }
+    }
+  }
+  
+  return false;
+}
 
 /**
  * Look up broker's assigned phone number from Supabase
@@ -134,8 +193,15 @@ async function getBrokerPhoneNumber(leadId, brokerId = null) {
     const phones = await phoneResponse.json();
     if (phones.length > 0) {
       const brokerPhone = phones[0].phone_number;
-      app.log.info({ broker_id: brokerIdToUse, phone: brokerPhone, label: phones[0].label }, '✅ Found broker phone');
-      return brokerPhone;
+      // Normalize the broker phone number to E.164 format
+      const normalizedBrokerPhone = normalizePhoneNumber(brokerPhone);
+      if (normalizedBrokerPhone) {
+        app.log.info({ broker_id: brokerIdToUse, phone: normalizedBrokerPhone, label: phones[0].label }, '✅ Found broker phone');
+        return normalizedBrokerPhone;
+      } else {
+        app.log.warn({ broker_id: brokerIdToUse, phone: brokerPhone }, '⚠️ Broker phone number is invalid format');
+        return null;
+      }
     }
     
     app.log.warn({ broker_id: brokerIdToUse }, '⚠️ No phone number found for broker');
@@ -250,6 +316,15 @@ app.post('/trigger-call', async (request, reply) => {
       });
     }
     
+    // Normalize and validate phone numbers
+    const normalizedTo = normalizePhoneNumber(to_phone);
+    if (!normalizedTo) {
+      return reply.code(400).send({
+        success: false,
+        error: `Invalid phone number format: ${to_phone}. Must be E.164 format (+1XXXXXXXXXX) or 10-digit US number.`
+      });
+    }
+    
     // Build agent URL with lead_id if provided
     let agentUrl = SWAIG_AGENT_URL;
     if (lead_id) {
@@ -270,18 +345,40 @@ app.post('/trigger-call', async (request, reply) => {
     }
     fromPhone = fromPhone || SIGNALWIRE_PHONE_NUMBER;
     
+    // Normalize from phone number
+    const normalizedFrom = normalizePhoneNumber(fromPhone);
+    if (!normalizedFrom) {
+      return reply.code(400).send({
+        success: false,
+        error: `Invalid from phone number format: ${fromPhone}. Must be E.164 format (+1XXXXXXXXXX) or 10-digit US number.`
+      });
+    }
+    
+    // Check for duplicate calls
+    if (isDuplicateCall(normalizedTo, normalizedFrom)) {
+      app.log.warn({ 
+        to: normalizedTo, 
+        from: normalizedFrom 
+      }, '[trigger-call] Duplicate call prevented');
+      return reply.code(429).send({
+        success: false,
+        error: 'Duplicate call prevented. Please wait before calling again.'
+      });
+    }
+    
     app.log.info({ 
-      to_phone, 
+      to_phone: normalizedTo, 
       lead_id,
-      from_phone: fromPhone,
-      using_broker_phone: fromPhone !== SIGNALWIRE_PHONE_NUMBER,
+      from_phone: normalizedFrom,
+      using_broker_phone: normalizedFrom !== normalizePhoneNumber(SIGNALWIRE_PHONE_NUMBER),
       agent_url: agentUrl.replace(/:[^:@]+@/, ':***@')  // mask password in logs
-    }, '[trigger-call] Creating outbound call via SignalWire Calling API');
+    }, '[trigger-call] Creating outbound call via SignalWire Relay REST API');
     
     const auth = Buffer.from(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`).toString('base64');
     
-    // Use Calling API (SWML-native) instead of LaML API
-    const response = await fetch(`${SIGNALWIRE_SPACE_URL}/api/calling/calls`, {
+    // Use Relay REST API for outbound calls with SWML script URL
+    // This is the correct endpoint for outbound calls with AI agents
+    const response = await fetch(`${SIGNALWIRE_SPACE_URL}/api/relay/rest/calls`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -289,15 +386,10 @@ app.post('/trigger-call', async (request, reply) => {
         'Authorization': `Basic ${auth}`
       },
       body: JSON.stringify({
-        command: 'dial',
-        params: {
-          url: agentUrl,
-          from: fromPhone,
-          to: to_phone,
-          caller_id: fromPhone,
-          timeout: 60,
-          max_duration: 3600
-        }
+        to: normalizedTo,
+        from: normalizedFrom,
+        url: agentUrl,
+        timeout: 30  // Reduced timeout to prevent long ring times
       })
     });
     
@@ -314,20 +406,41 @@ app.post('/trigger-call', async (request, reply) => {
     }
     
     if (!response.ok) {
-      app.log.error({ result, status: response.status }, '[trigger-call] SignalWire call creation failed');
+      app.log.error({ 
+        result, 
+        status: response.status,
+        to: normalizedTo,
+        from: normalizedFrom
+      }, '[trigger-call] SignalWire call creation failed');
+      
+      // Provide helpful error message
+      let errorMsg = result.message || result.error || `SignalWire API error (${response.status})`;
+      if (response.status === 404) {
+        errorMsg += '. The API endpoint may be incorrect. Verify the SignalWire API endpoint for outbound calls.';
+      } else if (response.status === 400) {
+        errorMsg += '. Check that phone numbers are in E.164 format and the URL is accessible.';
+      }
+      
       return reply.code(500).send({
         success: false,
-        error: result.message || result.error || `SignalWire API error (${response.status})`
+        error: errorMsg,
+        details: result
       });
     }
     
-    const callId = result.id || result.call_id || result.sid;
-    app.log.info({ call_id: callId }, '[trigger-call] Call created');
+    const callId = result.id || result.call_id || result.sid || result.call_sid;
+    if (!callId) {
+      app.log.warn({ result }, '[trigger-call] No call ID in response');
+    }
+    
+    app.log.info({ call_id: callId, to: normalizedTo, from: normalizedFrom }, '[trigger-call] Call created successfully');
     
     return reply.code(200).send({
       success: true,
       call_id: callId,
-      message: 'Outbound call initiated via SignalWire Calling API'
+      to: normalizedTo,
+      from: normalizedFrom,
+      message: 'Outbound call initiated via SignalWire Relay REST API'
     });
     
   } catch (err) {
