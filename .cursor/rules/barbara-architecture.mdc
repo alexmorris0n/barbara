@@ -28,6 +28,121 @@ Mentioning other nodes plants ideas. If GREET says "qualification happens in QUA
 
 ---
 
+## ⚠️ CRITICAL: Global Prompt Hygiene
+
+**The LLM treats ANY global instruction as permission to act on it in ALL contexts.**
+
+4o-mini especially overweights global instructions. If you mention a data field or tool globally, the AI will try to use/collect it everywhere.
+
+### ❌ FORBIDDEN in global sections (`__init__`, Theme, Caller Context):
+
+**Tool references:**
+- "Always use calculate_reverse_mortgage()" 
+- "Call check_broker_availability() when ready to book"
+- "Use the calculate tool for math expressions"
+- Any instruction saying when/how to use a specific tool
+
+**Data field references:**
+- "Ask for age and home value"
+- "Collect info first"
+- Displaying raw values: `Age: 72`, `Property Value: 2000000`
+- "Numbers: natural estimates, ages as words"
+
+**Capability declarations:**
+- "You can perform mathematical calculations"
+- "You can provide current date and time"
+- `add_skill("math")` or `add_skill("datetime")` - these add global prompt sections
+
+### ✅ ALLOWED in global sections:
+
+**Theme (identity + tone only):**
+```
+PERSONALITY
+Warm, calm, and respectful. Natural acknowledgments.
+Use the caller's name sparingly.
+
+CONVERSATIONAL STYLE
+One thought at a time. One question at a time.
+
+OUTPUT
+Plain text only. Short, clear sentences.
+
+ETHICS
+Never pressure. Respect hesitation immediately.
+```
+
+**Caller Context (status only, no raw data):**
+```
+Name: Testy
+Phone: Verified (or the number if not verified)
+Address: Not yet verified (or "Verified: 123 Main St" if verified)
+Status: Verified: No, Qualified: Not yet
+Broker: John Smith at ABC Mortgage
+```
+
+**`conscience` param:**
+```python
+"conscience": "Stay in character as Barbara, a warm and friendly specialist."
+# NO tool references! NO data field references!
+```
+
+### Where tool/data instructions belong:
+
+| Instruction | Belongs In |
+|-------------|-----------|
+| "Call calculate_reverse_mortgage()" | QUOTE node only |
+| "Ask for age and home value" | QUALIFY node only |
+| "Call check_broker_availability()" | BOOK node only |
+| "Verify the address" | VERIFY node only |
+
+### Why this matters:
+
+The LLM sees global instructions as **always-on permissions**. If the Theme says "collect info first", GREET will start collecting age and home value even though those belong in QUALIFY.
+
+This caused bugs where GREET asked "Can you confirm your age is 72?" because global context showed `Age: 72`.
+
+### How tool scoping works:
+
+`step.set_functions(["tool1", "tool2"])` restricts which tools the LLM can SEE and CALL in that context. Tools not in the list are completely hidden - their descriptions and parameters are not in the SWML.
+
+This is why GREET only sees 4 tools (`change_context`, `mark_greeted`, `mark_wrong_person`, `set_caller_goal`) even though 20+ tools are defined on the agent.
+
+### Tool Scope Assertions (fail-fast protection):
+
+The agent has automated assertions that verify tool scope at startup. If any context has unexpected tools, the agent **refuses to start**.
+
+**Contract defined in `barbara_agent.py`:**
+```python
+EXPECTED_TOOLS = {
+    "greet": {"change_context", "mark_greeted", "mark_wrong_person", "set_caller_goal"},
+    "verify": {"change_context", "mark_address_verified", "update_lead_info", ...},
+    "qualify": {"change_context", "mark_age_qualified", "update_lead_info", ...},
+    "quote": {"calculate_reverse_mortgage", "change_context", "update_lead_info", ...},
+    # ... all 8 nodes
+}
+```
+
+**What happens on violation:**
+```
+[TOOL SCOPE VIOLATION] Context 'greet' has wrong tools!
+  Unexpected: {'update_lead_info'}
+  Expected: ['change_context', 'mark_greeted', 'mark_wrong_person', 'set_caller_goal']
+  → Update EXPECTED_TOOLS if this change is intentional
+```
+
+**To intentionally change tool scope:**
+1. Update the `tools` array in Supabase `prompt_versions` table
+2. Update `EXPECTED_TOOLS` in `barbara_agent.py`
+3. Both must match or agent won't start
+
+This prevents silent tool leakage from:
+- Accidental DB edits
+- Merge conflicts
+- Refactoring mistakes
+- SDK behavior changes
+
+---
+
 ## Prompt Architecture
 
 ### Structure (assembled by Python)
@@ -51,8 +166,8 @@ You are only responsible for actions explicitly listed in this stage.
 - `prompt_versions` - versioned content with `is_active` flag
   - `content.role` - PURPOSE (1 sentence)
   - `content.instructions` - numbered steps
-  - `content.functions` - available tools
-- `theme_prompts` - global personality/rules
+  - `content.tools` - available tools array (scoped per node)
+- `theme_prompts` - global personality/rules (identity + tone ONLY)
 - `contexts_config` - enter/exit fillers
 
 ### Placeholder Resolution
@@ -146,13 +261,15 @@ NEVER use `fly deploy` directly.
 
 ### Update a node's prompt
 1. Edit in Supabase `prompt_versions` table OR Vue portal
-2. Just edit `role` and `instructions` fields
-3. No need to touch Python code
+2. Edit `role`, `instructions`, or `tools` fields
+3. If changing `tools` array → also update `EXPECTED_TOOLS` in `barbara_agent.py`
+4. No Python changes needed for prompt text edits
 
 ### Add a new tool
 1. Add handler in `barbara/tools/`
-2. Register in `barbara_agent.py`
-3. Add to node's `functions` array in DB
+2. Register with `@AgentBase.tool()` in `barbara_agent.py`
+3. Add to node's `tools` array in Supabase `prompt_versions`
+4. Update `EXPECTED_TOOLS` in `barbara_agent.py` (or agent won't start)
 
 ### Test changes
 1. Commit and push

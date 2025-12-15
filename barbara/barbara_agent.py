@@ -76,6 +76,96 @@ logger = logging.getLogger(__name__)
 # All 8 nodes in Barbara's conversation flow
 ALL_NODES = ["greet", "verify", "qualify", "quote", "answer", "objections", "book", "goodbye"]
 
+# Expected tools per context - assertion map to catch tool scope leakage
+# If a context has unexpected tools, agent fails at startup (not during a call)
+# Update this map when intentionally changing tool scope for a node
+EXPECTED_TOOLS = {
+    "greet": {
+        "change_context",
+        "mark_greeted",
+        "mark_wrong_person",
+        "set_caller_goal",
+    },
+    "verify": {
+        "change_context",
+        "mark_address_verified",
+        "mark_email_verified",
+        "mark_phone_verified",
+        "mark_ready_to_book",
+        "mark_verified",
+        "set_caller_goal",
+        "update_lead_info",
+    },
+    "qualify": {
+        "change_context",
+        "mark_age_qualified",
+        "mark_equity_qualified",
+        "mark_has_objection",
+        "mark_homeowner_qualified",
+        "mark_primary_residence_qualified",
+        "mark_ready_to_book",
+        "set_caller_goal",
+        "update_lead_info",
+    },
+    "quote": {
+        "calculate_reverse_mortgage",
+        "change_context",
+        "mark_qualification_result",
+        "mark_quote_presented",
+        "mark_ready_to_book",
+        "set_caller_goal",
+        "update_lead_info",
+    },
+    "answer": {
+        "change_context",
+        "mark_ready_to_book",
+        "search_knowledge",
+    },
+    "objections": {
+        "change_context",
+        "mark_has_objection",
+        "mark_objection_handled",
+        "search_knowledge",
+    },
+    "book": {
+        "book_appointment",
+        "change_context",
+        "check_broker_availability",
+        "mark_sms_consent",
+    },
+    "goodbye": {
+        "change_context",
+    },
+}
+
+
+def _assert_tool_scope(context_name: str, actual_tools: list) -> None:
+    """
+    Assert that a context has exactly the expected tools - no more, no less.
+    Fails fast at startup if tool scope has drifted (prevents silent leakage).
+    """
+    if context_name not in EXPECTED_TOOLS:
+        logger.warning(f"[TOOL SCOPE] No expected tools defined for context: {context_name}")
+        return
+    
+    actual_set = set(actual_tools) if actual_tools else set()
+    expected_set = EXPECTED_TOOLS[context_name]
+    
+    if actual_set != expected_set:
+        missing = expected_set - actual_set
+        extra = actual_set - expected_set
+        error_parts = [f"[TOOL SCOPE VIOLATION] Context '{context_name}' has wrong tools!"]
+        if missing:
+            error_parts.append(f"  Missing: {missing}")
+        if extra:
+            error_parts.append(f"  Unexpected: {extra}")
+        error_parts.append(f"  Expected: {sorted(expected_set)}")
+        error_parts.append(f"  Actual:   {sorted(actual_set)}")
+        error_parts.append("  → Update EXPECTED_TOOLS if this change is intentional")
+        raise RuntimeError("\n".join(error_parts))
+    
+    logger.debug(f"[TOOL SCOPE] ✓ Context '{context_name}' has correct tools")
+
 
 class BarbaraAgent(AgentBase):
     """
@@ -104,29 +194,24 @@ class BarbaraAgent(AgentBase):
         )
         
         # Static prompt sections (don't change per-call)
+        # NOTE: Keep global sections MINIMAL - no data field references!
+        # Any mention of age/home_value/etc causes LLM to ask for them in ALL contexts.
+        # Data-specific instructions belong in their respective node prompts only.
         self.prompt_add_section(
             "Role",
             "You are Barbara, a warm and professional voice assistant helping homeowners explore reverse mortgage options."
         )
-        self.prompt_add_section(
-            "Quote Tool Rule",
-            """CRITICAL:
-- If you present any dollar-amount estimate (lump sum, monthly amount, available funds), you MUST call calculate_reverse_mortgage() first.
-- If you are missing inputs, ask for them (especially exact age and home value) and update the lead via update_lead_info(), then call calculate_reverse_mortgage().
-- After you present the quote to the caller, call mark_quote_presented()."""
-        )
+        # REMOVED: "Quote Tool Rule" - moved to QUOTE node only to prevent greet from asking age/home value
         
         # NOTE: Dynamic sections (Theme, Caller Context) are added in on_swml_request
         # with INLINE VALUES (not placeholders) after lead data is loaded
         
-        # Add math skill per Section 5.18.3
-        # Provides: calculate - Evaluate mathematical expressions
-        self.add_skill("math")
+        # REMOVED: add_skill("math") - was adding global "Mathematical Calculations" prompt
+        # that primed numerical reasoning in all contexts. calculate_reverse_mortgage() 
+        # handles financial math internally in the QUOTE node.
         
-        # Add datetime skill per Section 5.18
-        # Provides: get_current_datetime - AI can know what day/time it is for booking
-        # Critical for interpreting "tomorrow", "next Tuesday", etc.
-        self.add_skill("datetime")
+        # REMOVED: add_skill("datetime") - was adding global "Date and Time Information" prompt.
+        # check_broker_availability() returns actual slots from Nylas, no date calculation needed.
         
         # Per Section 3.22: Speech hints improve recognition for domain-specific vocabulary
         # Critical for financial terms seniors may use
@@ -514,53 +599,37 @@ Rules:
         estimated_equity = lead.get('estimated_equity', 0) if lead else 0
         caller_age = lead.get('age', 0) if lead else 0
         
+        # Build minimal Caller Context - only show verified/confirmed data
+        # Raw values (age, property_value, etc.) are in global_data for tools to access
+        # We hide them here to prevent priming the LLM to collect/verify them in wrong contexts
+        phone_verified = lead.get('phone_verified', False) if lead else False
+        address_verified = lead.get('address_verified', False) if lead else False
+        fully_verified = lead.get('verified', False) if lead else False
+        fully_qualified = lead.get('qualified', False) if lead else False
+        
         self.prompt_add_section(
             "Caller Context",
             f"""=== CALL TYPE: {direction.upper()} ===
 {"FOR OUTBOUND: YOU start the conversation. Say 'Hi, may I speak with [name]?' first." if direction == "outbound" else "FOR INBOUND: Introduce yourself first."}
 
-You are speaking with {caller_name} (phone: {caller_phone}).
+=== CALLER ===
+Name: {caller_name}
+Phone: {"Verified" if phone_verified else caller_phone}
+{f"Persona (who sent email): {persona_name}" if persona_name else ""}
+{f"Goal: {caller_goal}" if caller_goal else ""}
 
-=== CAMPAIGN INFO ===
-Persona (who sent email): {persona_name}
-Caller's Goal: {caller_goal}
+=== ADDRESS ===
+{"Verified: " + property_address + ", " + property_city + ", " + property_state + " " + property_zip if address_verified else "Not yet verified"}
 
-=== PROPERTY INFO ===
-Address: {property_address}
-City: {property_city}, {property_state} {property_zip}
-Estimated Value: {property_value}
-Mortgage Balance: {mortgage_balance}
-Estimated Equity: {estimated_equity}
-Age: {caller_age}
+=== STATUS ===
+Verified: {"Yes" if fully_verified else "No"}
+Qualified: {"Yes" if fully_qualified else "Not yet"}
+Greeted: {"Yes" if conversation_data.get('greeted', False) else "No"}
+Quote Presented: {"Yes" if conversation_data.get('quote_presented', False) else "No"}
+Appointment Booked: {"Yes" if conversation_data.get('appointment_booked', False) else "No"}
 
-=== VERIFICATION STATUS ===
-Phone Verified: {lead.get('phone_verified', False) if lead else False}
-Email Verified: {lead.get('email_verified', False) if lead else False}
-Address Verified: {lead.get('address_verified', False) if lead else False}
-Fully Verified: {lead.get('verified', False) if lead else False}
-
-=== QUALIFICATION STATUS ===
-Age 62+ Qualified: {lead.get('age_qualified', False) if lead else False}
-Homeowner Qualified: {lead.get('homeowner_qualified', False) if lead else False}
-Primary Residence Qualified: {lead.get('primary_residence_qualified', False) if lead else False}
-Equity Qualified: {lead.get('equity_qualified', False) if lead else False}
-Fully Qualified: {lead.get('qualified', False) if lead else False}
-
-=== CONVERSATION STATUS ===
-Greeted: {conversation_data.get('greeted', False)}
-Quote Presented: {conversation_data.get('quote_presented', False)}
-Ready to Book: {conversation_data.get('ready_to_book', False)}
-Appointment Booked: {conversation_data.get('appointment_booked', False)}
-Wrong Person: {conversation_data.get('wrong_person', False)}
-Has Objection: {conversation_data.get('has_objection', False)}
-
-=== ASSIGNED BROKER ===
-Name: {broker_name}
-Company: {broker_company}
-
-=== BOOKING ===
-Broker: {broker_name}
-When ready to book, call check_broker_availability() to get real-time available slots.
+=== BROKER ===
+{broker_name}{f" at {broker_company}" if broker_company else ""}
 """
         )
         
@@ -584,7 +653,7 @@ When ready to book, call check_broker_availability() to get real-time available 
             "wait_for_user": direction == "outbound",  # Wait for senior to answer on outbound calls
             "save_conversation": True,
             "conversation_id": phone,
-            "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist. Always use the calculate_reverse_mortgage function for any financial calculations - never estimate or guess numbers.",
+            "conscience": "Remember to stay in character as Barbara, a warm and friendly reverse mortgage specialist.",
             "local_tz": "America/Los_Angeles",
             # Debug webhook disabled - we get full transcripts from post_prompt already
             # Uncomment below if real-time debugging is needed:
@@ -798,6 +867,9 @@ When ready to book, call check_broker_availability() to get real-time available 
             if functions:
                 step.set_functions(functions)
             
+            # Assert tool scope matches expected - fails fast if drifted
+            _assert_tool_scope(node_name, functions)
+            
             logger.info(f"[BARBARA] Built context '{node_name}' with {len(valid_contexts)} valid transitions, {len(functions)} functions")
         
         # NOTE: First context added ("greet") is the default per Section 6.8 examples.
@@ -865,9 +937,10 @@ When ready to book, call check_broker_availability() to get real-time available 
                        if lead and (lead.get('persona_sender_name') or '').strip() 
                        else '')
         
-        # Use explicit direction if provided, otherwise fall back to conv_state
-        # This prevents stale conv_state from incorrectly defaulting to "inbound"
-        call_direction = direction if direction else conv_state.get("call_direction", "inbound")
+        # Use explicit direction if provided, otherwise fall back to conv_state.conversation_data
+        # call_direction is nested inside conversation_data, not top-level
+        conv_data = conv_state.get("conversation_data", {}) if conv_state else {}
+        call_direction = direction if direction else conv_data.get("call_direction", "inbound")
         
         return {
             "${global_data.call_direction}": call_direction,
@@ -1405,11 +1478,12 @@ When ready to book, call check_broker_availability() to get real-time available 
             lead = get_lead_by_phone(phone)
             conv_state = get_conversation_state(phone)
             
-            # Get direction from conv_state (stored during on_swml_request)
-            # If missing, we can't reliably determine direction - log warning
-            direction = conv_state.get("call_direction") if conv_state else None
+            # Get direction from conv_state.conversation_data (stored during on_swml_request)
+            # call_direction is nested inside conversation_data, not top-level
+            conv_data = conv_state.get("conversation_data", {}) if conv_state else {}
+            direction = conv_data.get("call_direction")
             if not direction:
-                logger.warning(f"[BARBARA] call_direction not in conv_state - defaulting to 'inbound'")
+                logger.warning(f"[BARBARA] call_direction not in conv_state.conversation_data - defaulting to 'inbound'")
             
             placeholder_values = self._build_placeholder_values(lead, conv_state, phone, direction)
         
