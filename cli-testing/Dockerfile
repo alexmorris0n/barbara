@@ -1,5 +1,6 @@
 # Barbara CLI Testing Service - Simplified Dockerfile
 # Only Node.js for trigger-call endpoint
+# Note: /api/test-cli endpoint requires barbara_agent.py which is not included
 
 FROM node:20-slim
 

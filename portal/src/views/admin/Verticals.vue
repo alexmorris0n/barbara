@@ -2746,24 +2746,36 @@ async function saveTheme() {
 
 // Publish draft version - make it active
 async function publishDraft() {
-  if (!selectedVertical.value) return
+  console.log('[publishDraft] CALLED - selectedVertical:', selectedVertical.value, 'hasDraft:', hasDraft.value)
+  
+  if (!selectedVertical.value) {
+    console.log('[publishDraft] No vertical selected, returning')
+    return
+  }
 
   // Validate routing before publishing
   try {
+    console.log('[publishDraft] Starting routing validation...')
     await validateVerticalRouting()
+    console.log('[publishDraft] Routing validation passed')
   } catch (error) {
+    console.error('[publishDraft] Routing validation FAILED:', error)
     window.$message?.error('Cannot publish: Routing validation failed. Please fix errors first.')
     return
   }
   
   if (!hasDraft.value) {
+    console.log('[publishDraft] No draft detected (hasDraft.value is false)')
     window.$message?.warning('No draft version to publish')
     return
   }
   
+  console.log('[publishDraft] Showing confirmation dialog...')
   if (!confirm('Publish this draft version? This will make it the active version and cannot be undone.')) {
+    console.log('[publishDraft] User cancelled confirmation')
     return
   }
+  console.log('[publishDraft] User confirmed, proceeding with publish...')
   
   loading.value = true
   try {
@@ -2939,8 +2951,11 @@ async function checkForDraft() {
     }
     
     // Filter results to only include drafts for this vertical
+    console.log('[checkForDraft] Raw promptsResult:', JSON.stringify(promptsResult, null, 2))
+    
     const hasDraftNodes = promptsResult && promptsResult.some(pv => {
       const prompt = Array.isArray(pv.prompts) ? pv.prompts[0] : pv.prompts
+      console.log('[checkForDraft] Checking pv:', pv.id, 'prompts:', prompt, 'selected:', selectedVertical.value)
       return prompt && prompt.vertical === selectedVertical.value && prompt.node_name !== null
     })
     
@@ -4806,19 +4821,27 @@ async function saveNode(nodeName) {
       skip_user_turn: nodeContent.value[nodeName].skip_user_turn || false
     }
 
-    // Try CLI validation, but don't block save if service is unavailable
+    // CLI validation disabled - service doesn't have barbara_agent.py deployed
+    // Routing validation on Publish is the primary guardrail
+    // Uncomment below to re-enable CLI validation when service is updated:
+    /*
     try {
       await validateNodeWithCli(nodeName, contentObj)
     } catch (validationError) {
-      // If it's a connection error, warn but continue
-      if (validationError instanceof TypeError && validationError.message.includes('fetch')) {
+      const errorMsg = validationError?.message || ''
+      const isConnectionError = validationError instanceof TypeError && errorMsg.includes('fetch')
+      const isServiceUnavailable = errorMsg.includes('CLI testing unavailable') || 
+                                   errorMsg.includes('Agent file not found') ||
+                                   errorMsg.includes('simplified deployment')
+      
+      if (isConnectionError || isServiceUnavailable) {
         console.warn('CLI validation service unavailable, skipping validation:', validationError)
         window.$message?.warning('CLI validation service unavailable. Saving without validation.')
       } else {
-        // If it's an actual validation error, throw it
         throw validationError
       }
     }
+    */
     
     // Validate entire vertical's routing configuration BEFORE save
     // This ensures we don't save changes that would break routing
@@ -4935,6 +4958,7 @@ async function saveNode(nodeName) {
 
       if (existingPromptDraft) {
         // Update existing draft
+        console.log(`[saveNode] Updating existing draft for ${p.node_name}, id: ${existingPromptDraft.id}`)
         const { error: updateErr } = await supabase
           .from('prompt_versions')
           .update({
@@ -4945,7 +4969,8 @@ async function saveNode(nodeName) {
         if (updateErr) throw updateErr
       } else {
         // Create new draft version
-        const { error: insertErr } = await supabase
+        console.log(`[saveNode] Creating NEW draft for ${p.node_name}, prompt_id: ${p.id}, version: ${draftVersionNumber}`)
+        const { data: insertedDraft, error: insertErr } = await supabase
           .from('prompt_versions')
           .insert({
             prompt_id: p.id,
@@ -4956,7 +4981,13 @@ async function saveNode(nodeName) {
             created_by: 'portal',
             change_summary: `Draft - ${p.node_name === nodeName ? 'updated' : 'carried forward'} content`
           })
-        if (insertErr) throw insertErr
+          .select('id')
+          .single()
+        if (insertErr) {
+          console.error(`[saveNode] INSERT ERROR for ${p.node_name}:`, insertErr)
+          throw insertErr
+        }
+        console.log(`[saveNode] Draft created successfully for ${p.node_name}, new id: ${insertedDraft?.id}`)
       }
     }
     
