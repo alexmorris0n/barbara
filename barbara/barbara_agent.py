@@ -143,6 +143,10 @@ def _assert_tool_scope(context_name: str, actual_tools: list) -> None:
     """
     Assert that a context has exactly the expected tools - no more, no less.
     Fails fast at startup if tool scope has drifted (prevents silent leakage).
+    
+    Per architecture: Agent refuses to start on violation to prevent tool leakage.
+    If this causes a boot loop, update EXPECTED_TOOLS in barbara_agent.py to match
+    the tools array in Supabase prompt_versions table.
     """
     if context_name not in EXPECTED_TOOLS:
         logger.warning(f"[TOOL SCOPE] No expected tools defined for context: {context_name}")
@@ -154,14 +158,27 @@ def _assert_tool_scope(context_name: str, actual_tools: list) -> None:
     if actual_set != expected_set:
         missing = expected_set - actual_set
         extra = actual_set - expected_set
-        error_parts = [f"[TOOL SCOPE VIOLATION] Context '{context_name}' has wrong tools!"]
+        error_parts = [
+            "=" * 80,
+            "[TOOL SCOPE VIOLATION] Agent refusing to start to prevent tool leakage",
+            f"Context: '{context_name}'",
+            ""
+        ]
         if missing:
-            error_parts.append(f"  Missing: {missing}")
+            error_parts.append(f"  Missing tools: {sorted(missing)}")
         if extra:
-            error_parts.append(f"  Unexpected: {extra}")
-        error_parts.append(f"  Expected: {sorted(expected_set)}")
-        error_parts.append(f"  Actual:   {sorted(actual_set)}")
-        error_parts.append("  → Update EXPECTED_TOOLS if this change is intentional")
+            error_parts.append(f"  Unexpected tools: {sorted(extra)}")
+        error_parts.extend([
+            "",
+            f"  Expected: {sorted(expected_set)}",
+            f"  Actual:   {sorted(actual_set)}",
+            "",
+            "FIX: Update EXPECTED_TOOLS in barbara_agent.py to match Supabase prompt_versions.tools",
+            "     OR update Supabase prompt_versions.tools to match EXPECTED_TOOLS",
+            "",
+            "This fail-fast protection prevents silent tool leakage across contexts.",
+            "=" * 80
+        ])
         raise RuntimeError("\n".join(error_parts))
     
     logger.debug(f"[TOOL SCOPE] ✓ Context '{context_name}' has correct tools")
@@ -1678,4 +1695,5 @@ if __name__ == "__main__":
     host = os.getenv("AGENT_HOST", "0.0.0.0")
     port = int(os.getenv("AGENT_PORT", os.getenv("PORT", "3000")))
     logger.info(f"[BARBARA] Starting agent on {host}:{port}")
+    # Boot loop fix: Tool scope assertions restored per architecture
     agent.run(host=host, port=port)
