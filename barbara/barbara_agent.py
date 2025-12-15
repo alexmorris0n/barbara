@@ -1689,11 +1689,22 @@ Appointment Booked: {"Yes" if conversation_data.get('appointment_booked', False)
 
 # Entry point
 if __name__ == "__main__":
-    agent = BarbaraAgent()
+    try:
+        logger.info("[BARBARA] Initializing agent...")
+        agent = BarbaraAgent()
+        logger.info("[BARBARA] Agent initialized successfully")
+    except Exception as e:
+        logger.error(f"[BARBARA] ❌ CRITICAL: Agent initialization failed: {e}", exc_info=True)
+        # Re-raise to prevent silent failures - Fly.io will restart
+        raise
+    
     # Bind explicitly for Fly (and other containerized environments).
     # The SDK manual documents AGENT_HOST / AGENT_PORT as the supported env vars.
     host = os.getenv("AGENT_HOST", "0.0.0.0")
     port = int(os.getenv("AGENT_PORT", os.getenv("PORT", "3000")))
     logger.info(f"[BARBARA] Starting agent on {host}:{port}")
-    # Boot loop fix: Tool scope assertions restored per architecture
-    agent.run(host=host, port=port)
+    try:
+        agent.run(host=host, port=port)
+    except Exception as e:
+        logger.error(f"[BARBARA] ❌ CRITICAL: Agent runtime error: {e}", exc_info=True)
+        raise
