@@ -13,3 +13,4 @@ COMMENT ON COLUMN theme_prompts.config IS 'JSONB object storing vertical-specifi
 
 
 
+
